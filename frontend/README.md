@@ -96,6 +96,8 @@ SDL game controller:
 - `Select + Start`: optional fallback menu combo (enable in Controller settings)
 - In the menu: D-pad/left stick moves, Cross selects, Circle closes
 - Left/Right changes the save-state slot
+- The button used to resume from the menu is discarded until it is released
+  (up to one second), so it does not reach the game
 - The standard SDL gamepad mapping is used: Cross → PS1 Cross, Circle → Circle,
   Square → Square, Triangle → Triangle, shoulders → L1/R1, triggers → L2/R2,
   stick clicks → L3/R3.

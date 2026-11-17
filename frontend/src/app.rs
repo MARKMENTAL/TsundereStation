@@ -200,6 +200,8 @@ impl App {
                     self.screen = Screen::Game;
                     self.overlay_open = false;
                     self.paused = false;
+                    self.sdl.clear_input_lockout();
+                    self.host.input.set(0, [0; 4]);
                     self.texture = None;
                     self.texture_seq = 0;
                     self.texture_size = [0, 0];
@@ -217,6 +219,8 @@ impl App {
                     self.paused_by_overlay = false;
                     self.settings_open = false;
                     self.controller_open = false;
+                    self.sdl.clear_input_lockout();
+                    self.host.input.set(0, [0; 4]);
                     self.host
                         .fast_forward
                         .store(false, std::sync::atomic::Ordering::Relaxed);
@@ -590,6 +594,17 @@ impl App {
         }
         self.overlay_open = false;
         self.settings_open = false;
+        self.controller_open = false;
+
+        if self.screen == Screen::Game {
+            // Drop the button press that selected Resume/Close immediately so
+            // the core cannot observe it on the first resumed frame, then keep
+            // suppressing until the pad returns to neutral.
+            self.host.input.set(0, [0; 4]);
+            self.sdl
+                .suppress_input_until_release(Duration::from_millis(1000));
+        }
+
         if self.paused_by_overlay {
             self.paused = false;
             self.paused_by_overlay = false;
@@ -601,6 +616,8 @@ impl App {
         if self.core_info.is_none() {
             return;
         }
+        self.sdl.clear_input_lockout();
+        self.host.input.set(0, [0; 4]);
         self.loading_game = true;
         self.last_error = None;
         self.worker.send(Command::BootBios {
@@ -622,6 +639,8 @@ impl App {
             self.push_toast("Core is still starting".into(), MessageKind::Warning, 3.0);
             return;
         }
+        self.sdl.clear_input_lockout();
+        self.host.input.set(0, [0; 4]);
         self.loading_game = true;
         self.last_error = None;
         self.worker.send(Command::LoadGame {
@@ -643,6 +662,8 @@ impl App {
         self.paused = false;
         self.paused_by_overlay = false;
         self.loading_game = false;
+        self.sdl.clear_input_lockout();
+        self.host.input.set(0, [0; 4]);
         self.texture = None;
     }
 

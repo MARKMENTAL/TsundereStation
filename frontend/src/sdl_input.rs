@@ -61,6 +61,8 @@ pub struct SdlState {
     last_rumble_values: (u16, u16),
     last_button: String,
     activity: bool,
+    suppress_input: bool,
+    suppress_deadline: Option<Instant>,
     nav_prev: [bool; 6],
     nav_repeat_at: Option<Instant>,
     // Keep the subsystem/device handles alive and drop them before SDL_Quit.
@@ -141,6 +143,8 @@ impl SdlState {
             last_rumble_values: (0, 0),
             last_button: String::new(),
             activity: false,
+            suppress_input: false,
+            suppress_deadline: None,
             nav_prev: [false; 6],
             nav_repeat_at: None,
         };
@@ -171,6 +175,26 @@ impl SdlState {
     /// splash screen.
     pub fn take_activity(&mut self) -> bool {
         std::mem::take(&mut self.activity)
+    }
+
+    /// Discard gamepad input after resuming from the menu. Input stays zeroed
+    /// until the buttons/sticks return to neutral, or `max` elapses as a
+    /// stuck-controller safety valve.
+    pub fn suppress_input_until_release(&mut self, max: Duration) {
+        self.suppress_input = true;
+        self.suppress_deadline = Some(Instant::now() + max);
+        log::info!(
+            "Suppressing gamepad input until neutral (max {} ms)",
+            max.as_millis()
+        );
+    }
+
+    pub fn clear_input_lockout(&mut self) {
+        if self.suppress_input {
+            log::debug!("Gamepad input lockout cleared");
+        }
+        self.suppress_input = false;
+        self.suppress_deadline = None;
     }
 
     pub fn select_guid(&mut self, guid: &str) {
@@ -384,6 +408,7 @@ impl SdlState {
     fn update_input(&mut self, host: &Arc<HostState>, config: &Config) {
         let Some(controller) = self.selected.as_ref() else {
             host.input.set(0, [0; 4]);
+            self.clear_input_lockout();
             return;
         };
 
@@ -431,6 +456,21 @@ impl SdlState {
             dead(controller.axis(Axis::RightX)),
             dead(controller.axis(Axis::RightY)),
         ];
+
+        if self.suppress_input {
+            let any_button = buttons != 0;
+            let any_axis = axes.iter().any(|axis| axis.abs() > 2000);
+            let expired = self
+                .suppress_deadline
+                .map(|deadline| Instant::now() >= deadline)
+                .unwrap_or(true);
+            if (any_button || any_axis) && !expired {
+                host.input.set(0, [0; 4]);
+                return;
+            }
+            self.clear_input_lockout();
+        }
+
         host.input.set(buttons, axes);
     }
 
