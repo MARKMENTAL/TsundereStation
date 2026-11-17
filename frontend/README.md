@@ -64,6 +64,56 @@ config file controls the duration.
 The FPS/status overlay is hidden by default. Toggle it in-game with `F3`, from
 the pause menu, or with the “Show FPS/status overlay” checkbox in the launcher.
 
+## AppImage (AMD64)
+
+A local AppImage build script is included:
+
+```sh
+./packaging/build-appimage.sh
+```
+
+It builds the core and frontend, downloads the AppImage tools into
+`packaging/tools/`, creates `dist/AppDir`, and produces:
+
+- `dist/TsundereStation-<version>-x86_64.AppImage`
+- `dist/TsundereStation-x86_64.AppImage` (stable symlink)
+
+The AppImage bundles `swanstation_libretro.so`, the desktop file, the icon, the
+license, and a source note, so no separate core installation is needed.
+
+Current builds target **Debian 13 / glibc 2.41 or newer**. Build on an older
+distribution if you need a wider glibc baseline. This is a local-only build for
+now; a future Debian 13 Forgejo Runner can reuse the script with
+`--skip-build` after performing its own core/frontend build.
+
+Useful options:
+
+```sh
+# Reuse already-built binaries
+./packaging/build-appimage.sh --skip-build
+
+# Build without running the AppImage selftest
+./packaging/build-appimage.sh --no-test
+```
+
+Run the result:
+
+```sh
+chmod +x dist/TsundereStation-x86_64.AppImage
+./dist/TsundereStation-x86_64.AppImage
+```
+
+AppImage type 2 requires FUSE2 on some systems. If FUSE is unavailable, run:
+
+```sh
+./dist/TsundereStation-x86_64.AppImage --appimage-extract-and-run
+```
+
+Optional desktop integration is provided by tools such as AppImageLauncher; the
+AppImage itself runs standalone. The app’s config, BIOS, saves and states still
+live under the usual `~/.config/tsunderestation` and
+`~/.local/share/tsunderestation` paths.
+
 ## Data locations
 
 Following the XDG base directory spec:
