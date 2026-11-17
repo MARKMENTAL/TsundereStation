@@ -41,6 +41,7 @@ pub struct Config {
     pub fullscreen: bool,
     pub show_splash: bool,
     pub splash_seconds: f32,
+    pub show_fps: bool,
     pub input: InputConfig,
     pub core_options: BTreeMap<String, String>,
 }
@@ -60,6 +61,7 @@ impl Default for Config {
             fullscreen: false,
             show_splash: true,
             splash_seconds: 4.0,
+            show_fps: false,
             input: InputConfig::default(),
             core_options: BTreeMap::new(),
         }

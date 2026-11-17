@@ -17,6 +17,8 @@ enum Screen {
     Game,
 }
 
+const OVERLAY_ACTIONS: usize = 10;
+
 struct Toast {
     text: String,
     kind: MessageKind,
@@ -476,10 +478,10 @@ impl App {
     fn handle_overlay_nav(&mut self, nav: NavAction, ctx: &egui::Context) {
         match nav {
             NavAction::Up => {
-                self.menu_selection = (self.menu_selection + 8) % 9;
+                self.menu_selection = (self.menu_selection + OVERLAY_ACTIONS - 1) % OVERLAY_ACTIONS;
             }
             NavAction::Down => {
-                self.menu_selection = (self.menu_selection + 1) % 9;
+                self.menu_selection = (self.menu_selection + 1) % OVERLAY_ACTIONS;
             }
             NavAction::Left => {
                 self.quick_slot = (self.quick_slot + 9) % 10;
@@ -504,9 +506,27 @@ impl App {
             4 => self.settings_open = true,
             5 => self.controller_open = true,
             6 => self.toggle_fullscreen(ctx),
-            7 => self.quit_to_launcher(),
-            8 => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            7 => self.toggle_fps_display(true),
+            8 => self.quit_to_launcher(),
+            9 => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             _ => {}
+        }
+    }
+
+    fn toggle_fps_display(&mut self, notify: bool) {
+        self.config.show_fps = !self.config.show_fps;
+        let _ = self.config.save();
+        if notify {
+            self.push_toast(
+                if self.config.show_fps {
+                    "FPS/status overlay on"
+                } else {
+                    "FPS/status overlay off"
+                }
+                .into(),
+                MessageKind::Info,
+                2.0,
+            );
         }
     }
 
@@ -527,6 +547,9 @@ impl App {
             }
             if ctx.input(|i| i.key_pressed(egui::Key::F8)) {
                 self.worker.send(Command::LoadState(self.quick_slot));
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::F3)) {
+                self.toggle_fps_display(true);
             }
             if ctx.input(|i| i.key_pressed(egui::Key::F11)) {
                 self.toggle_fullscreen(ctx);
@@ -903,6 +926,14 @@ impl App {
                         self.config.show_splash = show_splash;
                         let _ = self.config.save();
                     }
+                    let mut show_fps = self.config.show_fps;
+                    if ui
+                        .checkbox(&mut show_fps, "Show FPS/status overlay")
+                        .changed()
+                    {
+                        self.config.show_fps = show_fps;
+                        let _ = self.config.save();
+                    }
                 });
             });
         });
@@ -935,24 +966,33 @@ impl App {
                 );
             }
 
-            let mut info = format!("{:.2} Hz", self.host.fps());
-            if self.paused {
-                info.push_str(" · paused");
-            }
-            if self
+            let fast_forward = self
                 .host
                 .fast_forward
-                .load(std::sync::atomic::Ordering::Relaxed)
-            {
-                info.push_str(" · >>");
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let status = if self.config.show_fps {
+                let mut info = format!("{:.2} Hz", self.host.fps());
+                if self.paused {
+                    info.push_str(" · paused");
+                }
+                if fast_forward {
+                    info.push_str(" · >>");
+                }
+                Some(info)
+            } else if fast_forward {
+                Some(">>".to_string())
+            } else {
+                None
+            };
+            if let Some(info) = status {
+                ui.painter().text(
+                    rect.left_top() + egui::vec2(10.0, 10.0),
+                    egui::Align2::LEFT_TOP,
+                    info,
+                    egui::FontId::monospace(13.0),
+                    egui::Color32::from_white_alpha(170),
+                );
             }
-            ui.painter().text(
-                rect.left_top() + egui::vec2(10.0, 10.0),
-                egui::Align2::LEFT_TOP,
-                info,
-                egui::FontId::monospace(13.0),
-                egui::Color32::from_white_alpha(170),
-            );
         });
 
         if self.overlay_open {
@@ -982,6 +1022,11 @@ impl App {
             "Settings…".to_string(),
             "Controller…".to_string(),
             "Toggle fullscreen (F11)".to_string(),
+            if self.config.show_fps {
+                "Hide FPS display (F3)".to_string()
+            } else {
+                "Show FPS display (F3)".to_string()
+            },
             "Quit to launcher".to_string(),
             "Quit TsundereStation".to_string(),
         ];
@@ -996,7 +1041,11 @@ impl App {
             .show(ctx, |ui| {
                 ui.set_min_width(400.0);
                 ui.heading(if self.paused { "Paused" } else { "Menu" });
-                ui.weak(format!("{fps:.2} Hz · slot {}", self.quick_slot));
+                ui.weak(if self.config.show_fps {
+                    format!("{fps:.2} Hz · slot {}", self.quick_slot)
+                } else {
+                    format!("slot {}", self.quick_slot)
+                });
                 ui.horizontal(|ui| {
                     ui.label("Slot");
                     egui::ComboBox::from_id_salt("save-slot")

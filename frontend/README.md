@@ -61,6 +61,9 @@ mouse click, or controller button. It can be disabled with `--no-splash` or the
 “Show splash on startup” checkbox in the launcher. `splash_seconds` in the
 config file controls the duration.
 
+The FPS/status overlay is hidden by default. Toggle it in-game with `F3`, from
+the pause menu, or with the “Show FPS/status overlay” checkbox in the launcher.
+
 ## Data locations
 
 Following the XDG base directory spec:
@@ -86,6 +89,7 @@ Keyboard:
 - `Esc` / `F1`: open/close the in-game menu
 - `F5`: quick save (slot 0)
 - `F8`: quick load (slot 0)
+- `F3`: show/hide the FPS/status overlay
 - `F11`: toggle fullscreen
 - Hold `Tab`: fast-forward (audio muted, video shown)
 - In the menu: arrow keys move, `Enter` selects, `Esc` closes
