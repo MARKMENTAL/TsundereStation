@@ -1,8 +1,11 @@
-# SwanStation native frontend
+# TsundereStation
 
 A small Linux-only native frontend for the SwanStation libretro core, built with
 Rust, egui/eframe and SDL2. It loads `swanstation_libretro.so` directly; RetroArch
 is not required.
+
+The app includes the TsundereStation logo and a short startup splash with the
+provided motif. Both assets are embedded in the binary.
 
 ## Build
 
@@ -27,45 +30,54 @@ would rather compile SDL2 from source:
 cargo build --release --features bundled-sdl
 ```
 
-The frontend looks for `swanstation_libretro.so` next to the executable, in the
-current working directory, one level up, or in `/usr/lib/libretro`. You can also
-set `SWANSTATION_CORE=/path/to/swanstation_libretro.so` or use `--core`.
-
 ## Run
 
 ```sh
-./target/release/swanstation-ui
+./target/release/tsunderestation
 ```
 
 Useful flags:
 
 ```sh
 # Boot directly into a disc image
-./target/release/swanstation-ui --game /path/to/game.cue
+./target/release/tsunderestation --game /path/to/game.cue
 
 # Boot the BIOS shell (memory-card manager, BIOS test)
-./target/release/swanstation-ui --boot-bios
+./target/release/tsunderestation --boot-bios
+
+# Skip the startup splash for this run
+./target/release/tsunderestation --no-splash
 
 # Choose a different core library or BIOS directory
-./target/release/swanstation-ui --core /path/to/swanstation_libretro.so \
+./target/release/tsunderestation --core /path/to/swanstation_libretro.so \
     --bios-dir /path/to/bios
 
 # Headless smoke test: boot BIOS, run frames, save/load state, dump a frame
-./target/release/swanstation-ui --selftest
+./target/release/tsunderestation --selftest
 ```
+
+The splash is shown for about four seconds and is skipped by any keyboard key,
+mouse click, or controller button. It can be disabled with `--no-splash` or the
+“Show splash on startup” checkbox in the launcher. `splash_seconds` in the
+config file controls the duration.
 
 ## Data locations
 
 Following the XDG base directory spec:
 
-- Config: `~/.config/swanstation-ui/config.toml`
-- BIOS images: `~/.local/share/swanstation-ui/bios/`
-- Memory cards: `~/.local/share/swanstation-ui/saves/*.srm`
-- Save states: `~/.local/share/swanstation-ui/states/*.state`
+- Config: `~/.config/tsunderestation/config.toml`
+- BIOS images: `~/.local/share/tsunderestation/bios/`
+- Memory cards: `~/.local/share/tsunderestation/saves/*.srm`
+- Save states: `~/.local/share/tsunderestation/states/*.state`
+
+On first run, an existing `swanstation-ui` config and data directory are migrated
+to the new `tsunderestation` paths automatically. The data directory is moved when
+possible; the old config file is left in place.
 
 BIOS files are optional. If the BIOS folder is empty, the core uses its built-in
-OpenBIOS. Use the launcher's "Add BIOS image…" button to copy a `.bin` image into
-the managed BIOS folder; the core selects a region-appropriate image on boot.
+OpenBIOS. Use the launcher's “Add BIOS image…” button to copy a `.bin`, `.rom`,
+or `.img` image into the managed BIOS folder; the core selects a region-appropriate
+image on boot.
 
 ## Controls
 
@@ -93,6 +105,27 @@ for the controller (or launch the frontend outside Steam). SDL's HIDAPI driver i
 enabled by the frontend; if the controller is not detected, check hidraw/udev
 permissions.
 
+## Desktop install
+
+The `install.sh` helper installs the frontend, the desktop entry, the icon, and
+the built core under `~/.local`:
+
+```sh
+./install.sh
+```
+
+It copies:
+
+- `~/.local/bin/tsunderestation`
+- `~/.local/share/applications/tsunderestation.desktop`
+- `~/.local/share/icons/hicolor/512x512/apps/tsunderestation.png`
+- `~/.local/lib/libretro/swanstation_libretro.so` (if the core is built)
+
+Make sure `~/.local/bin` is in your `PATH`. The frontend also searches for the
+core next to the executable, in the current directory, in
+`~/.local/lib/libretro`, and in `/usr/lib/libretro`; or set
+`TSUNDERESTATION_CORE` / use `--core`.
+
 ## Current limitations
 
 - Software renderer only. Hardware OpenGL/Vulkan rendering, internal-resolution
@@ -104,8 +137,8 @@ permissions.
 - Rewind, runahead and cheats are not exposed yet.
 - Core options mostly apply on the next frame. When no game is running, changing
   an option automatically reinitializes the core so boot-time options apply to
-  the next start. While a game is running, use the Settings window's "Restart
-  core" button (the current game is reloaded automatically).
+  the next start. While a game is running, use the Settings window's “Restart
+  core” button (the current game is reloaded automatically).
 - Audio output uses SDL's default device at 44.1 kHz. If no compatible device is
   available the frontend still runs, silently.
 
@@ -114,6 +147,10 @@ permissions.
 - `src/libretro/`: minimal hand-written libretro ABI, core loader, host callbacks,
   video/audio/input handoff.
 - `src/emu.rs`: emulation worker thread, commands, save states and memory cards.
-- `src/sdl_input.rs`: SDL controller discovery, mapping, rumble and menu navigation.
-- `src/app.rs`: launcher, in-game overlay, settings and controller windows.
+- `src/sdl_input.rs`: SDL controller discovery, mapping, rumble, menu navigation
+  and the shared SDL audio callback (including the splash motif).
+- `src/splash.rs`: embedded logo and motif decoding, branding helpers.
+- `src/app.rs`: splash, launcher, in-game overlay, settings and controller windows.
 - `src/filebrowser.rs`: small built-in file picker.
+- `assets/`: embedded logo, splash motif and desktop icon.
+- `packaging/`: desktop entry.

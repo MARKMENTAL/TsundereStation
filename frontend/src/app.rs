@@ -4,13 +4,15 @@ use crate::filebrowser::{BrowseKind, BrowseResult, FileBrowser};
 use crate::libretro::host::{HostState, MessageKind};
 use crate::libretro::loader::{state_path, CoreInfo};
 use crate::sdl_input::{NavAction, SdlState};
+use crate::splash::{self, SplashAudio};
 use eframe::egui;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Screen {
+    Splash,
     Launcher,
     Game,
 }
@@ -48,6 +50,12 @@ pub struct App {
     texture_seq: u64,
     texture_size: [usize; 2],
 
+    logo_texture: Option<egui::TextureHandle>,
+    splash_audio: Arc<Mutex<SplashAudio>>,
+    splash_start: Instant,
+    splash_duration: Duration,
+    splash_fade_started: bool,
+
     toasts: Vec<Toast>,
     file_browser: Option<FileBrowser>,
     bios_files: Vec<(String, u64)>,
@@ -67,11 +75,42 @@ impl App {
         core_path: PathBuf,
         auto_start: bool,
         auto_boot_bios: bool,
+        splash_override: Option<bool>,
     ) -> anyhow::Result<Self> {
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
         host.video.set_context(cc.egui_ctx.clone());
 
-        let sdl = SdlState::new(host.audio.clone(), &config.controller_guid)?;
+        let logo_texture = match splash::logo_image() {
+            Ok(image) => Some(cc.egui_ctx.load_texture(
+                "tsunderestation-logo",
+                image,
+                egui::TextureOptions::LINEAR,
+            )),
+            Err(e) => {
+                log::warn!("Could not decode the embedded logo: {e:#}");
+                None
+            }
+        };
+
+        let show_splash = splash_override.unwrap_or(config.show_splash);
+        let splash_audio = if show_splash {
+            match SplashAudio::decode_motif() {
+                Ok(audio) => audio,
+                Err(e) => {
+                    log::warn!("Could not decode the splash motif: {e:#}");
+                    SplashAudio::empty()
+                }
+            }
+        } else {
+            SplashAudio::empty()
+        };
+        let splash_audio = Arc::new(Mutex::new(splash_audio));
+
+        let sdl = SdlState::new(
+            host.audio.clone(),
+            &config.controller_guid,
+            splash_audio.clone(),
+        )?;
         if !sdl.selected_guid().is_empty() && sdl.selected_guid() != config.controller_guid {
             config.controller_guid = sdl.selected_guid().to_string();
             let _ = config.save();
@@ -86,13 +125,18 @@ impl App {
         );
 
         let port_device = config_port_device(&config);
+        let splash_seconds = config.splash_seconds;
         let mut app = Self {
             config,
             host,
             worker,
             core_info: None,
             sdl,
-            screen: Screen::Launcher,
+            screen: if show_splash {
+                Screen::Splash
+            } else {
+                Screen::Launcher
+            },
             game_path: None,
             game_title: String::new(),
             loading_game: false,
@@ -109,6 +153,11 @@ impl App {
             texture: None,
             texture_seq: 0,
             texture_size: [0, 0],
+            logo_texture,
+            splash_audio,
+            splash_start: Instant::now(),
+            splash_duration: Duration::from_secs_f32(splash_seconds.clamp(1.0, 30.0)),
+            splash_fade_started: false,
             toasts: Vec::new(),
             file_browser: None,
             bios_files: Vec::new(),
@@ -134,14 +183,7 @@ impl App {
                     self.resolve_port_device(&info);
                     self.core_info = Some(info);
                     self.last_error = None;
-                    if !self.did_auto_start {
-                        self.did_auto_start = true;
-                        if self.auto_boot_bios {
-                            self.start_bios();
-                        } else if self.auto_start {
-                            self.start_game();
-                        }
-                    }
+                    self.maybe_auto_start();
                 }
                 WorkerEvent::Booted { title, path } => {
                     self.game_title = title;
@@ -198,6 +240,127 @@ impl App {
                 }
             }
         }
+    }
+
+    fn maybe_auto_start(&mut self) {
+        if self.screen == Screen::Splash || self.did_auto_start || self.core_info.is_none() {
+            return;
+        }
+        self.did_auto_start = true;
+        if self.auto_boot_bios {
+            self.start_bios();
+        } else if self.auto_start {
+            self.start_game();
+        }
+    }
+
+    fn finish_splash(&mut self) {
+        if self.screen != Screen::Splash {
+            return;
+        }
+        if let Ok(mut audio) = self.splash_audio.lock() {
+            audio.stop();
+        }
+        self.screen = Screen::Launcher;
+        self.maybe_auto_start();
+    }
+
+    fn handle_splash(&mut self, ctx: &egui::Context) {
+        if self.screen != Screen::Splash {
+            return;
+        }
+        let elapsed = self.splash_start.elapsed();
+        let fade_len = Duration::from_millis(600);
+        if !self.splash_fade_started && elapsed + fade_len >= self.splash_duration {
+            if let Ok(mut audio) = self.splash_audio.lock() {
+                audio.fade_out(fade_len);
+            }
+            self.splash_fade_started = true;
+        }
+
+        let key = ctx.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    egui::Event::Key {
+                        pressed: true,
+                        repeat: false,
+                        ..
+                    }
+                )
+            })
+        });
+        let click = ctx.input(|i| i.pointer.any_click());
+        let controller = self.sdl.take_activity();
+        if elapsed >= self.splash_duration || key || click || controller {
+            self.finish_splash();
+        }
+    }
+
+    fn splash(&mut self, ui: &mut egui::Ui) {
+        egui::CentralPanel::no_frame().show(ui, |ui| {
+            let rect = ui.max_rect();
+            ui.painter()
+                .rect_filled(rect, egui::CornerRadius::ZERO, egui::Color32::BLACK);
+
+            let elapsed = self.splash_start.elapsed().as_secs_f32();
+            let total = self.splash_duration.as_secs_f32().max(0.1);
+            let fade_in = (elapsed / 0.35).clamp(0.0, 1.0);
+            let fade_out = ((total - elapsed) / 0.6).clamp(0.0, 1.0);
+            let alpha = fade_in.min(fade_out);
+
+            if let Some(texture) = &self.logo_texture {
+                let side = rect.width().min(rect.height()) * 0.72;
+                let image_rect = egui::Rect::from_center_size(
+                    rect.center() - egui::vec2(0.0, 14.0),
+                    egui::vec2(side, side),
+                );
+                let tint = egui::Color32::from_white_alpha((alpha * 255.0) as u8);
+                ui.painter().image(
+                    texture.id(),
+                    image_rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    tint,
+                );
+            } else {
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "TsundereStation",
+                    egui::FontId::proportional(42.0),
+                    egui::Color32::from_white_alpha((alpha * 255.0) as u8),
+                );
+            }
+
+            let hint = egui::Color32::from_white_alpha((alpha * 170.0) as u8);
+            ui.painter().text(
+                rect.center_bottom() - egui::vec2(0.0, 46.0),
+                egui::Align2::CENTER_BOTTOM,
+                "Press any key or button to skip",
+                egui::FontId::proportional(14.0),
+                hint,
+            );
+
+            let progress = (elapsed / total).clamp(0.0, 1.0);
+            let bar = egui::Rect::from_min_size(
+                egui::pos2(rect.center().x - 140.0, rect.bottom() - 28.0),
+                egui::vec2(280.0, 3.0),
+            );
+            ui.painter().rect_filled(
+                bar,
+                egui::CornerRadius::same(2),
+                egui::Color32::from_gray(45),
+            );
+            let fill = egui::Rect::from_min_size(
+                bar.min,
+                egui::vec2(bar.width() * progress, bar.height()),
+            );
+            ui.painter().rect_filled(
+                fill,
+                egui::CornerRadius::same(2),
+                egui::Color32::from_rgb(230, 30, 120),
+            );
+        });
     }
 
     fn resolve_port_device(&mut self, info: &CoreInfo) {
@@ -513,15 +676,27 @@ impl App {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    ui.heading("SwanStation");
-                    ui.label(
-                        egui::RichText::new("PlayStation emulator")
-                            .weak()
-                            .size(14.0),
-                    );
+                    if let Some(texture_id) = self.logo_texture.as_ref().map(|t| t.id()) {
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(58.0, 58.0), egui::Sense::hover());
+                        ui.painter().image(
+                            texture_id,
+                            rect,
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            egui::Color32::WHITE,
+                        );
+                    }
+                    ui.vertical(|ui| {
+                        ui.heading("TsundereStation");
+                        ui.label(
+                            egui::RichText::new("A SwanStation frontend in Rust")
+                                .weak()
+                                .size(14.0),
+                        );
+                    });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if let Some(info) = &self.core_info {
-                            ui.weak(format!("{} {}", info.name, info.version));
+                            ui.weak(format!("{} core {}", info.name, info.version));
                         } else {
                             ui.spinner();
                             ui.weak("Loading core…");
@@ -699,6 +874,14 @@ impl App {
                     if ui.button("Quit").clicked() {
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     }
+                    let mut show_splash = self.config.show_splash;
+                    if ui
+                        .checkbox(&mut show_splash, "Show splash on startup")
+                        .changed()
+                    {
+                        self.config.show_splash = show_splash;
+                        let _ = self.config.save();
+                    }
                 });
             });
         });
@@ -779,7 +962,7 @@ impl App {
             "Controller…".to_string(),
             "Toggle fullscreen (F11)".to_string(),
             "Quit to launcher".to_string(),
-            "Quit SwanStation".to_string(),
+            "Quit TsundereStation".to_string(),
         ];
         let mut clicked = None;
 
@@ -1309,9 +1492,11 @@ impl eframe::App for App {
         self.process_worker_events();
         self.process_host_messages();
         self.poll_sdl(&ctx);
+        self.handle_splash(&ctx);
         self.handle_hotkeys(&ctx);
 
         match self.screen {
+            Screen::Splash => self.splash(ui),
             Screen::Launcher => self.launcher(ui),
             Screen::Game => self.game(ui),
         }
@@ -1319,7 +1504,9 @@ impl eframe::App for App {
         self.settings_window(&ctx);
         self.controller_window(&ctx);
         self.browser_window(&ctx);
-        self.draw_toasts(&ctx);
+        if self.screen != Screen::Splash {
+            self.draw_toasts(&ctx);
+        }
 
         ctx.request_repaint_after(Duration::from_millis(16));
     }

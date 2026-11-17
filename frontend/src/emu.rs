@@ -55,7 +55,7 @@ impl WorkerHandle {
         let (event_tx, events) = mpsc::channel::<WorkerEvent>();
 
         let join = thread::Builder::new()
-            .name("swanstation-core".to_string())
+            .name("tsunderestation-core".to_string())
             .spawn(move || {
                 let result = run_worker(core_path, host, saved_options, state_dir, rx, &event_tx);
                 if let Err(e) = result {

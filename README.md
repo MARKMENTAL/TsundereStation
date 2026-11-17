@@ -51,7 +51,7 @@ For example, if your disc image was named `Spyro3.cue`, you would place the SBI 
  - Passes amidog's CPU and GTE tests in both interpreter and recompiler modes, partial passing of CPX tests
 
 ## Native frontend
-A small Linux-only native frontend using Rust, egui and SDL2 lives in [`frontend/`](frontend/). It loads the Libretro core directly, so RetroArch is not required. See [`frontend/README.md`](frontend/README.md) for build and usage instructions.
+TsundereStation is a small Linux-only native frontend using Rust, egui and SDL2. It lives in [`frontend/`](frontend/), loads the Libretro core directly (RetroArch is not required) and includes a branded startup splash. See [`frontend/README.md`](frontend/README.md) for build, usage and desktop-install instructions.
 
 ## Disclaimers
 

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=TsundereStation
+GenericName=PlayStation Emulator Frontend
+Comment=A SwanStation frontend written in Rust
+Exec=tsunderestation
+Icon=tsunderestation
+Terminal=false
+Categories=Game;Emulator;
+Keywords=ps1;playstation;emulator;swanstation;
+StartupWMClass=tsunderestation

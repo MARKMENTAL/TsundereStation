@@ -5,6 +5,9 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const APP_DIR: &str = "tsunderestation";
+const LEGACY_APP_DIR: &str = "swanstation-ui";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InputConfig {
@@ -36,13 +39,15 @@ pub struct Config {
     pub controller_guid: String,
     pub port1_device: Option<u32>,
     pub fullscreen: bool,
+    pub show_splash: bool,
+    pub splash_seconds: f32,
     pub input: InputConfig,
     pub core_options: BTreeMap<String, String>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        let data = data_dir().join("swanstation-ui");
+        let data = data_dir().join(APP_DIR);
         Self {
             core_path: PathBuf::new(),
             bios_dir: data.join("bios"),
@@ -53,6 +58,8 @@ impl Default for Config {
             controller_guid: String::new(),
             port1_device: None,
             fullscreen: false,
+            show_splash: true,
+            splash_seconds: 4.0,
             input: InputConfig::default(),
             core_options: BTreeMap::new(),
         }
@@ -61,30 +68,102 @@ impl Default for Config {
 
 impl Config {
     pub fn path() -> PathBuf {
-        config_dir().join("swanstation-ui").join("config.toml")
+        config_dir().join(APP_DIR).join("config.toml")
     }
 
     pub fn load() -> Self {
         let path = Self::path();
-        match fs::read_to_string(&path) {
-            Ok(text) => match toml::from_str::<Self>(&text) {
-                Ok(mut cfg) => {
-                    cfg.ensure_dirs();
-                    cfg
-                }
-                Err(e) => {
-                    log::warn!("Failed to parse {}: {e}; using defaults", path.display());
-                    let mut cfg = Self::default();
-                    cfg.ensure_dirs();
-                    cfg
-                }
-            },
-            Err(_) => {
+        if let Ok(text) = fs::read_to_string(&path) {
+            return Self::parse_or_default(&text, &path);
+        }
+        if let Some(cfg) = Self::migrate_legacy() {
+            return cfg;
+        }
+        let mut cfg = Self::default();
+        cfg.ensure_dirs();
+        cfg
+    }
+
+    fn parse_or_default(text: &str, path: &Path) -> Self {
+        match toml::from_str::<Self>(text) {
+            Ok(mut cfg) => {
+                cfg.ensure_dirs();
+                cfg
+            }
+            Err(e) => {
+                log::warn!("Failed to parse {}: {e}; using defaults", path.display());
                 let mut cfg = Self::default();
                 cfg.ensure_dirs();
                 cfg
             }
         }
+    }
+
+    /// One-time migration from the old `swanstation-ui` frontend identity.
+    fn migrate_legacy() -> Option<Self> {
+        let old_config = config_dir().join(LEGACY_APP_DIR).join("config.toml");
+        if !old_config.exists() {
+            return None;
+        }
+        let text = fs::read_to_string(&old_config).ok()?;
+        let mut cfg = match toml::from_str::<Self>(&text) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                log::warn!(
+                    "Could not parse legacy config {}: {e}; using defaults",
+                    old_config.display()
+                );
+                Self::default()
+            }
+        };
+
+        let old_root = data_dir().join(LEGACY_APP_DIR);
+        let new_root = data_dir().join(APP_DIR);
+        let mut use_new_paths = true;
+
+        if old_root.exists() && !new_root.exists() {
+            match fs::rename(&old_root, &new_root) {
+                Ok(()) => log::info!(
+                    "Migrated legacy data directory {} -> {}",
+                    old_root.display(),
+                    new_root.display()
+                ),
+                Err(rename_error) => {
+                    log::warn!(
+                        "Could not rename {} to {}: {rename_error}; trying a copy",
+                        old_root.display(),
+                        new_root.display()
+                    );
+                    match copy_dir_recursive(&old_root, &new_root) {
+                        Ok(()) => log::info!(
+                            "Copied legacy data directory {} -> {}",
+                            old_root.display(),
+                            new_root.display()
+                        ),
+                        Err(copy_error) => {
+                            log::warn!(
+                                "Could not copy legacy data; keeping old paths: {copy_error}"
+                            );
+                            use_new_paths = false;
+                        }
+                    }
+                }
+            }
+        }
+
+        if use_new_paths {
+            cfg.bios_dir = rewrite_legacy_path(&cfg.bios_dir, &old_root, &new_root);
+            cfg.save_dir = rewrite_legacy_path(&cfg.save_dir, &old_root, &new_root);
+            cfg.state_dir = rewrite_legacy_path(&cfg.state_dir, &old_root, &new_root);
+        }
+
+        cfg.ensure_dirs();
+        if let Err(e) = cfg.save() {
+            log::warn!("Could not write migrated config: {e}");
+        } else {
+            log::info!("Migrated legacy config to {}", Self::path().display());
+        }
+        Some(cfg)
     }
 
     pub fn save(&self) -> Result<()> {
@@ -117,10 +196,12 @@ impl Config {
         if !self.core_path.as_os_str().is_empty() && self.core_path.exists() {
             return Some(self.core_path.clone());
         }
-        if let Ok(p) = env::var("SWANSTATION_CORE") {
-            let p = PathBuf::from(p);
-            if p.exists() {
-                return Some(p);
+        for var in ["TSUNDERESTATION_CORE", "SWANSTATION_CORE"] {
+            if let Ok(p) = env::var(var) {
+                let p = PathBuf::from(p);
+                if p.exists() {
+                    return Some(p);
+                }
             }
         }
 
@@ -131,6 +212,9 @@ impl Config {
                 // Running the debug or release binary from frontend/target/...
                 candidates.push(dir.join("../../../swanstation_libretro.so"));
                 candidates.push(dir.join("../../../../swanstation_libretro.so"));
+                // User-local install layout: ~/.local/bin/tsunderestation and
+                // ~/.local/lib/libretro/swanstation_libretro.so.
+                candidates.push(dir.join("../lib/libretro/swanstation_libretro.so"));
             }
         }
         if let Ok(cwd) = env::current_dir() {
@@ -138,12 +222,35 @@ impl Config {
             candidates.push(cwd.join("../swanstation_libretro.so"));
             candidates.push(cwd.join("../../swanstation_libretro.so"));
         }
+        candidates.push(home_dir().join(".local/lib/libretro/swanstation_libretro.so"));
         candidates.push(PathBuf::from("/usr/lib/libretro/swanstation_libretro.so"));
         candidates
             .into_iter()
             .find(|p| p.exists())
             .map(|p| fs::canonicalize(&p).unwrap_or(p))
     }
+}
+
+fn rewrite_legacy_path(path: &Path, old_root: &Path, new_root: &Path) -> PathBuf {
+    match path.strip_prefix(old_root) {
+        Ok(rest) => new_root.join(rest),
+        Err(_) => path.to_path_buf(),
+    }
+}
+
+fn copy_dir_recursive(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let source = entry.path();
+        let target = to.join(entry.file_name());
+        if source.is_dir() {
+            copy_dir_recursive(&source, &target)?;
+        } else {
+            fs::copy(&source, &target)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn data_dir() -> PathBuf {

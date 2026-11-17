@@ -4,6 +4,7 @@ mod emu;
 mod filebrowser;
 mod libretro;
 mod sdl_input;
+mod splash;
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
@@ -17,6 +18,7 @@ fn main() -> Result<()> {
     let mut selftest = false;
     let mut auto_start = false;
     let mut auto_boot_bios = false;
+    let mut splash_override: Option<bool> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -41,10 +43,12 @@ fn main() -> Result<()> {
                     config.bios_dir = PathBuf::from(p);
                 }
             }
+            "--no-splash" => splash_override = Some(false),
+            "--splash" => splash_override = Some(true),
             "--selftest" => selftest = true,
             "--help" | "-h" => {
                 println!(
-                    "swanstation-ui [--core <core.so>] [--game <disc>] [--boot-bios] [--bios-dir <dir>] [--selftest]"
+                    "tsunderestation [--core <core.so>] [--game <disc>] [--boot-bios] [--bios-dir <dir>] [--no-splash] [--splash] [--selftest]"
                 );
                 return Ok(());
             }
@@ -54,7 +58,7 @@ fn main() -> Result<()> {
     }
 
     if selftest {
-        let temp = std::env::temp_dir().join("swanstation-selftest");
+        let temp = std::env::temp_dir().join("tsunderestation-selftest");
         config.bios_dir = temp.join("bios");
         config.save_dir = temp.join("saves");
         config.state_dir = temp.join("states");
@@ -85,20 +89,34 @@ fn main() -> Result<()> {
         }
     };
 
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_inner_size([1100.0, 720.0])
+        .with_min_inner_size([800.0, 520.0])
+        .with_title("TsundereStation")
+        .with_app_id("tsunderestation");
+    match splash::window_icon() {
+        Ok(icon) => viewport = viewport.with_icon(Arc::new(icon)),
+        Err(e) => log::warn!("Could not decode the window icon: {e:#}"),
+    }
     let native_options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([1100.0, 720.0])
-            .with_min_inner_size([800.0, 520.0])
-            .with_title("SwanStation"),
+        viewport,
         ..Default::default()
     };
 
     eframe::run_native(
-        "SwanStation",
+        "TsundereStation",
         native_options,
         Box::new(move |cc| {
-            let app = app::App::new(cc, config, host, core, auto_start, auto_boot_bios)
-                .context("initializing frontend")?;
+            let app = app::App::new(
+                cc,
+                config,
+                host,
+                core,
+                auto_start,
+                auto_boot_bios,
+                splash_override,
+            )
+            .context("initializing frontend")?;
             Ok(Box::new(app))
         }),
     )
@@ -151,7 +169,7 @@ fn run_selftest(
 
     if let Some((frame, _)) = host.video.latest() {
         println!("frame: {}x{}", frame.width, frame.height);
-        let ppm_path = std::env::temp_dir().join("swanstation-selftest.ppm");
+        let ppm_path = std::env::temp_dir().join("tsunderestation-selftest.ppm");
         let mut ppm = Vec::with_capacity(32 + frame.rgba.len() / 4 * 3);
         ppm.extend_from_slice(format!("P6\n{} {}\n255\n", frame.width, frame.height).as_bytes());
         for px in frame.rgba.chunks_exact(4) {
@@ -166,7 +184,7 @@ fn run_selftest(
 
     let state = ch.save_state()?;
     println!("save state size: {}", state.len());
-    let tmp = std::env::temp_dir().join("swanstation-selftest.state");
+    let tmp = std::env::temp_dir().join("tsunderestation-selftest.state");
     std::fs::write(&tmp, &state)?;
     ch.load_state_from(&tmp)?;
     println!("state round-trip ok");

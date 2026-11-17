@@ -2,13 +2,14 @@ use crate::config::Config;
 use crate::libretro::audio::AudioRing;
 use crate::libretro::ffi;
 use crate::libretro::host::{HostState, MessageKind};
+use crate::splash::SplashAudio;
 use anyhow::{anyhow, Result};
 use sdl2::audio::{AudioCallback, AudioDevice, AudioSpecDesired};
 use sdl2::controller::{Axis, Button, GameController};
 use sdl2::event::Event;
 use sdl2::GameControllerSubsystem;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug)]
@@ -31,6 +32,7 @@ pub enum NavAction {
 
 pub struct RingAudio {
     ring: Arc<AudioRing>,
+    splash: Arc<Mutex<SplashAudio>>,
 }
 
 impl AudioCallback for RingAudio {
@@ -38,6 +40,11 @@ impl AudioCallback for RingAudio {
 
     fn callback(&mut self, out: &mut [f32]) {
         self.ring.fill(out);
+        if let Ok(mut splash) = self.splash.lock() {
+            for sample in out.iter_mut() {
+                *sample = (*sample + splash.next_sample()).clamp(-1.0, 1.0);
+            }
+        }
     }
 }
 
@@ -53,6 +60,7 @@ pub struct SdlState {
     last_rumble: Instant,
     last_rumble_values: (u16, u16),
     last_button: String,
+    activity: bool,
     nav_prev: [bool; 6],
     nav_repeat_at: Option<Instant>,
     // Keep the subsystem/device handles alive and drop them before SDL_Quit.
@@ -62,7 +70,11 @@ pub struct SdlState {
 }
 
 impl SdlState {
-    pub fn new(ring: Arc<AudioRing>, preferred_guid: &str) -> Result<Self> {
+    pub fn new(
+        ring: Arc<AudioRing>,
+        preferred_guid: &str,
+        splash: Arc<Mutex<SplashAudio>>,
+    ) -> Result<Self> {
         let _ = sdl2::hint::set("SDL_JOYSTICK_HIDAPI", "1");
         let _ = sdl2::hint::set("SDL_JOYSTICK_HIDAPI_PS4", "1");
         let _ = sdl2::hint::set("SDL_JOYSTICK_HIDAPI_PS5", "1");
@@ -83,8 +95,10 @@ impl SdlState {
                     samples: Some(1024),
                 };
                 let ring_for_device = ring.clone();
+                let splash_for_device = splash.clone();
                 match subsystem.open_playback(None, &desired, move |_spec| RingAudio {
                     ring: ring_for_device,
+                    splash: splash_for_device,
                 }) {
                     Ok(device) => {
                         let spec = device.spec();
@@ -126,6 +140,7 @@ impl SdlState {
             last_rumble: Instant::now(),
             last_rumble_values: (0, 0),
             last_button: String::new(),
+            activity: false,
             nav_prev: [false; 6],
             nav_repeat_at: None,
         };
@@ -150,6 +165,12 @@ impl SdlState {
 
     pub fn last_button(&self) -> &str {
         &self.last_button
+    }
+
+    /// Any controller button activity since the last call, used to skip the
+    /// splash screen.
+    pub fn take_activity(&mut self) -> bool {
+        std::mem::take(&mut self.activity)
     }
 
     pub fn select_guid(&mut self, guid: &str) {
@@ -259,6 +280,7 @@ impl SdlState {
                     removed_instance = Some(which);
                 }
                 Event::ControllerButtonDown { which, button, .. } => {
+                    self.activity = true;
                     if Some(which) == self.selected_instance {
                         self.last_button = format!("{button:?}");
                         if button == Button::Guide {
