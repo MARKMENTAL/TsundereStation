@@ -50,6 +50,9 @@ For example, if your disc image was named `Spyro3.cue`, you would place the SBI 
 ## Tests
  - Passes amidog's CPU and GTE tests in both interpreter and recompiler modes, partial passing of CPX tests
 
+## Native frontend
+A small Linux-only native frontend using Rust, egui and SDL2 lives in [`frontend/`](frontend/). It loads the Libretro core directly, so RetroArch is not required. See [`frontend/README.md`](frontend/README.md) for build and usage instructions.
+
 ## Disclaimers
 
 "PlayStation" and "PSX" are registered trademarks of Sony Interactive Entertainment Europe Limited. This project is not affiliated in any way with Sony Interactive Entertainment.
