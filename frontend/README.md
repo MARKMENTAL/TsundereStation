@@ -108,9 +108,30 @@ It builds the core and frontend, downloads the AppImage tools into
 
 - `dist/TsundereStation-<version>-x86_64.AppImage`
 - `dist/TsundereStation-x86_64.AppImage` (stable symlink)
+- `dist/TsundereStation-v<version>-SHA256SUMS.txt`
+- `dist/TsundereStation-v<version>-release.md`
 
 The AppImage bundles `swanstation_libretro.so`, the desktop file, the icon, the
 license, and a source note, so no separate core installation is needed.
+
+The release draft contains the suggested `v<version>` tag, download name,
+SHA-256, verification instructions, requirements, release highlights and a
+manual GitHub upload checklist. Highlights come from
+`packaging/release-notes/v<version>.md`; edit that file before rebuilding if a
+version needs different notes.
+
+Verify a downloaded build from the directory containing both files:
+
+```sh
+cd dist
+sha256sum -c TsundereStation-v<version>-SHA256SUMS.txt
+```
+
+Expected:
+
+```text
+TsundereStation-<version>-x86_64.AppImage: OK
+```
 
 Current builds target **Debian 13 / glibc 2.41 or newer**. Build on an older
 distribution if you need a wider glibc baseline. This is a local-only build for

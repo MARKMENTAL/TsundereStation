@@ -17,7 +17,7 @@ set -euo pipefail
 say() { printf '%s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
-for cmd in curl make cargo install strip readelf; do
+for cmd in curl make cargo install strip readelf sha256sum; do
     command -v "$cmd" >/dev/null 2>&1 || die "missing required command: $cmd"
 done
 
@@ -35,6 +35,12 @@ desktop="$here/tsunderestation.desktop"
 icon="$frontend/assets/tsunderestation.png"
 version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$frontend/Cargo.toml" | head -n1)"
 [[ -n "$version" ]] || die "could not read version from frontend/Cargo.toml"
+release_tag="v${version}"
+checksum_file="$dist/TsundereStation-${release_tag}-SHA256SUMS.txt"
+release_file="$dist/TsundereStation-${release_tag}-release.md"
+release_template="$here/release-template.md"
+release_notes="$here/release-notes/v${version}.md"
+[[ -f "$release_template" ]] || die "missing release template: $release_template"
 
 skip_build=0
 run_test=1
@@ -56,6 +62,8 @@ Options:
 The AppImage tools are cached in packaging/tools. Set
 TSUNDERESTATION_APPIMAGE_TOOLS to use a different cache directory.
 The resulting AppImage requires the build host's glibc or newer.
+
+A successful build also writes a SHA256SUMS file and release draft under dist/.
 EOF
             exit 0
             ;;
@@ -68,13 +76,23 @@ done
 say "TsundereStation AppImage build"
 say "  repo:    $repo"
 say "  version: $version"
+host_name="unknown"
 if [[ -f /etc/os-release ]]; then
     # shellcheck disable=SC1091
     . /etc/os-release
-    say "  host:    ${PRETTY_NAME:-unknown}"
+    host_name="${PRETTY_NAME:-unknown}"
 fi
+glibc_version="unknown"
 if command -v ldd >/dev/null 2>&1; then
-    say "  glibc:   $(ldd --version 2>/dev/null | head -n1 || true)"
+    glibc_version="$(ldd --version 2>/dev/null | head -n1 || true)"
+fi
+say "  host:    $host_name"
+say "  glibc:   $glibc_version"
+glibc_min="$(printf '%s\n' "$glibc_version" | grep -oE '[0-9]+\.[0-9]+' | head -n1 || true)"
+if [[ -n "$glibc_min" ]]; then
+    glibc_requirement="glibc ${glibc_min} or newer"
+else
+    glibc_requirement="glibc matching the build host or newer"
 fi
 
 if [[ "$skip_build" -eq 0 ]]; then
@@ -149,6 +167,7 @@ ARCH=x86_64 VERSION="$version" \
 
 ln -sfn "$(basename "$out")" "$stable"
 
+selftest_status="not run"
 if [[ "$run_test" -eq 1 ]]; then
     say "Running AppImage selftest..."
     tmp="$(mktemp -d)"
@@ -164,14 +183,70 @@ if [[ "$run_test" -eq 1 ]]; then
         die "AppImage selftest failed"
     fi
     grep -q "selftest ok" "$tmp/selftest.log" || die "AppImage selftest did not report success"
+    selftest_status="passed"
     say "AppImage selftest passed."
 fi
+
+artifact_name="$(basename "$out")"
+sha256="$(cd "$dist" && sha256sum "$artifact_name" | awk '{print $1}')"
+build_date="$(date -u '+%Y-%m-%d %H:%M UTC')"
+printf '%s  %s\n' "$sha256" "$artifact_name" > "$checksum_file"
+
+if [[ -f "$release_notes" ]]; then
+    notes_file="$release_notes"
+else
+    notes_file=""
+fi
+
+awk -v tag="$release_tag" \
+    -v artifact="$artifact_name" \
+    -v sha="$sha256" \
+    -v checksum="$(basename "$checksum_file")" \
+    -v selftest="$selftest_status" \
+    -v build_date="$build_date" \
+    -v host="$host_name" \
+    -v glibc="$glibc_version" \
+    -v glibc_requirement="$glibc_requirement" \
+    -v notes_file="$notes_file" '
+function replace_all(value, needle, replacement,    position) {
+    while ((position = index(value, needle)) > 0)
+        value = substr(value, 1, position - 1) replacement substr(value, position + length(needle));
+    return value;
+}
+{
+    if ($0 == "{{HIGHLIGHTS}}") {
+        found = 0;
+        if (notes_file != "") {
+            while ((getline line < notes_file) > 0) {
+                print line;
+                found = 1;
+            }
+            close(notes_file);
+        }
+        if (!found)
+            print "- Add release highlights here.";
+        next;
+    }
+    line = $0;
+    line = replace_all(line, "{{TAG}}", tag);
+    line = replace_all(line, "{{ARTIFACT}}", artifact);
+    line = replace_all(line, "{{SHA256}}", sha);
+    line = replace_all(line, "{{CHECKSUM}}", checksum);
+    line = replace_all(line, "{{SELFTEST}}", selftest);
+    line = replace_all(line, "{{BUILD_DATE}}", build_date);
+    line = replace_all(line, "{{HOST}}", host);
+    line = replace_all(line, "{{GLIBC}}", glibc);
+    line = replace_all(line, "{{GLIBC_REQUIREMENT}}", glibc_requirement);
+    print line;
+}' "$release_template" > "$release_file"
 
 say ""
 say "Built:"
 say "  $out"
 say "  $stable -> $(basename "$out")"
 say "  size: $(du -h "$out" | cut -f1)"
+say "  checksum: $checksum_file"
+say "  release:  $release_file"
 say ""
 say "Run it with:"
 say "  $stable"

@@ -91,6 +91,16 @@ Build the AppImage:
 The AppImage is a local Debian 13 / glibc 2.41 build. There is no AppImage CI
 yet. The build script runs the packaged binary's `--selftest` unless disabled.
 
+After a successful build, the script also writes:
+
+- `dist/TsundereStation-v<version>-SHA256SUMS.txt`
+- `dist/TsundereStation-v<version>-release.md`
+
+The draft uses `packaging/release-template.md` and injects
+`packaging/release-notes/v<version>.md` under **Highlights**. If the notes file
+is missing, it emits a placeholder. Do not hand-edit generated files in
+`dist/`; update the template or per-version notes and rebuild.
+
 ## Version and artifact policy
 
 - Current version: **0.2.0**.
@@ -100,6 +110,10 @@ yet. The build script runs the packaged binary's `--selftest` unless disabled.
   version in place for fixes.
 - After rebuilding, report the new SHA256 of
   `dist/TsundereStation-0.2.0-x86_64.AppImage`.
+- Generated release files use tag `v<version>`, e.g.
+  `TsundereStation-v0.2.0-SHA256SUMS.txt` and
+  `TsundereStation-v0.2.0-release.md`. Upload the AppImage and checksum file
+  manually; paste the release draft as GitHub release notes.
 - Documentation-only changes do not require rebuilding the AppImage.
 
 ## Source map
@@ -122,6 +136,8 @@ yet. The build script runs the packaged binary's `--selftest` unless disabled.
 | `assets/tsunderestation.png` | Desktop icon and README logo. |
 | `assets/tsunderestation-logo.jpg` | Splash/logo source image. |
 | `assets/tsunderestation-splash.mp3` | Embedded splash motif. |
+| `packaging/release-template.md` | Release-draft template. |
+| `packaging/release-notes/` | Per-version release highlights. |
 
 ## Architecture
 
@@ -461,7 +477,7 @@ Before finishing:
 - Use `UiTheme` colors instead of hardcoded UI colors.
 - Run fmt, tests, clippy, release build and selftest.
 - Rebuild the AppImage in place only when code/assets are affected, and report
-  the new hash.
+  the new hash plus the generated release/checksum paths.
 - Update `README.md` or this file when behavior, commands or decisions change.
 
 ## Branding
