@@ -50,8 +50,25 @@ For example, if your disc image was named `Spyro3.cue`, you would place the SBI 
 ## Tests
  - Passes amidog's CPU and GTE tests in both interpreter and recompiler modes, partial passing of CPX tests
 
-## Native frontend
-TsundereStation is a small Linux-only native frontend using Rust, egui and SDL2. It lives in [`frontend/`](frontend/), loads the Libretro core directly (RetroArch is not required) and includes a branded startup splash. See [`frontend/README.md`](frontend/README.md) for build, usage and desktop-install instructions.
+## Native frontend: TsundereStation
+
+<p align="center">
+  <img src="frontend/assets/tsunderestation.png" width="180" alt="TsundereStation logo">
+</p>
+
+<p align="center"><em>“Anta baka?! Are you an idiot?!” — The Tsundere, after catching you using a non-free PS1 emulator like DuckStation.</em></p>
+
+TsundereStation is free software: a standalone SwanStation PlayStation 1 emulator
+front-end written in Rust with egui/eframe and SDL2. It loads the libretro core
+directly (RetroArch is not required) and focuses on playing PS1 games with a
+good, controller-friendly TV UI. No Discord integration, no RetroAchievements,
+no trophy popups, no bells and whistles — just the core, the games, and a
+tsundere attitude.
+
+It lives in [`frontend/`](frontend/). See
+[`frontend/README.md`](frontend/README.md) for build, usage and desktop-install
+instructions, and [`frontend/AGENTS.md`](frontend/AGENTS.md) for implementation
+notes and coding invariants.
 
 ## Disclaimers
 

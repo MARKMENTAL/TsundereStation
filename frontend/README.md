@@ -1,11 +1,34 @@
-# TsundereStation
+<p align="center">
+  <img src="assets/tsunderestation.png" width="220" alt="TsundereStation logo">
+</p>
 
-A small Linux-only native frontend for the SwanStation libretro core, built with
-Rust, egui/eframe and SDL2. It loads `swanstation_libretro.so` directly; RetroArch
-is not required.
+<h1 align="center">TsundereStation</h1>
+
+<p align="center"><em>“Anta baka?! Are you an idiot?!” — The Tsundere, after catching you using a non-free PS1 emulator like DuckStation.</em></p>
+
+TsundereStation is free software: a standalone SwanStation PlayStation 1 emulator
+front-end written in Rust with egui/eframe and SDL2. It loads
+`swanstation_libretro.so` directly; RetroArch is not required.
+
+It focuses on playing PS1 games with a good, controller-friendly TV UI. No
+Discord integration, no RetroAchievements, no trophy popups, no bells and
+whistles. Just the core, the games, and a tsundere attitude.
 
 The app includes the TsundereStation logo and a short startup splash with the
 provided motif. Both assets are embedded in the binary.
+
+## Scope
+
+- Free software under GPL-3.0-or-later.
+- Standalone native front-end for the SwanStation libretro core.
+- TV/controller-first launcher, file browser and pause menu.
+- Mouse/keyboard settings, controller configuration, save states and themes.
+- Linux only; software rendering for now.
+
+Not in scope: Discord integration, RetroAchievements, accounts, cloud saves,
+telemetry, or other online service integrations.
+
+For implementation decisions and AI-agent guidance, see [`AGENTS.md`](AGENTS.md).
 
 ## Build
 
@@ -256,6 +279,16 @@ core next to the executable, in the current directory, in
   and the shared SDL audio callback (including the splash motif).
 - `src/splash.rs`: embedded logo and motif decoding, branding helpers.
 - `src/app.rs`: splash, launcher, in-game overlay, settings and controller windows.
+- `src/theme.rs`: theme catalog, palette derivation, contrast rules, theme picker
+  and custom window headers.
+- `src/tv_ui.rs`: large full-width TV rows and controller hints.
+- `src/config.rs`: config schema, XDG paths, legacy migration and core discovery.
 - `src/filebrowser.rs`: small built-in file picker.
-- `assets/`: embedded logo, splash motif and desktop icon.
-- `packaging/`: desktop entry.
+- `assets/`: embedded themes, logo, splash motif and desktop icon.
+- `packaging/`: desktop entry and AppImage build script.
+
+## Development notes
+
+Implementation decisions and coding invariants are documented in
+[`AGENTS.md`](AGENTS.md), including the theme contrast contract, egui gotchas,
+version/artifact policy and verification checklist.
