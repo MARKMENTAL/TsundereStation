@@ -49,7 +49,7 @@ These are direct `F12` screenshots from TsundereStation.
       <img src="readme-screenshots/Shin Seiki Evangelion - Koutetsu no Girlfriend (Japan)-20261118165503.jpg" alt="Evangelion dialogue scene" width="320">
     </td>
     <td align="center" valign="top">
-      <img src="readme-screenshots/Shin Seiki Evangelion - Koutetsu no Girlfriend (Japan)-20261118165607.jpg" alt="Evangelion classroom scene" width="320">
+      <img src="readme-screenshots/Shin Seiki Evangelion - Koutetsu no Girlfriend (Japan)-20261118165607.jpg" alt="Evangelion dialogue scene2" width="320">
     </td>
     <td align="center" valign="top">
       <img src="readme-screenshots/WWF SmackDown! 2 - Know Your Role (USA)-20261118162849.jpg" alt="WWF SmackDown! 2 match" width="320">
@@ -57,7 +57,7 @@ These are direct `F12` screenshots from TsundereStation.
   </tr>
   <tr>
     <td align="center"><em>Shin Seiki Evangelion — dialogue scene.</em></td>
-    <td align="center"><em>Shin Seiki Evangelion — classroom scene.</em></td>
+    <td align="center"><em>Shin Seiki Evangelion — another dialogue scene.</em></td>
     <td align="center"><em>WWF SmackDown! 2 — match action.</em></td>
   </tr>
   <tr>
