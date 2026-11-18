@@ -134,6 +134,19 @@ image on boot.
 
 ## Controls
 
+The launcher, file browser and in-game pause menu are designed for TV use with
+large rows and controller navigation. Settings and Controller windows use the
+mouse/keyboard for now.
+
+Controller navigation:
+
+- Launcher: D-pad/left stick moves, Cross selects, Left/Right changes the selected controller
+- File browser: D-pad/left stick moves, Cross opens/chooses, Circle closes
+- In the pause menu: D-pad/left stick moves, Cross selects, Circle/PS closes
+- Keyboard equivalents: arrow keys move, `Enter` selects, `Esc` closes
+
+The rest of the controls:
+
 Keyboard:
 
 - `Esc` / `F1`: open/close the in-game menu

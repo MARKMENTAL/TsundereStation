@@ -5,6 +5,7 @@ use crate::libretro::host::{HostState, MessageKind};
 use crate::libretro::loader::{state_path, CoreInfo};
 use crate::sdl_input::{NavAction, SdlState};
 use crate::splash::{self, SplashAudio};
+use crate::tv_ui::{controller_hint, tv_row};
 use eframe::egui;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -17,7 +18,32 @@ enum Screen {
     Game,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NavContext {
+    FileBrowser,
+    Overlay,
+    Launcher,
+}
+
 const OVERLAY_ACTIONS: usize = 10;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LauncherItem {
+    Play,
+    BootBios,
+    BrowseGame,
+    RecentGame(usize),
+    AddBios,
+    OpenBios,
+    Controller,
+    RescanControllers,
+    ControllerSettings,
+    ToggleSplash,
+    ToggleFps,
+    ToggleFullscreen,
+    Settings,
+    Quit,
+}
 
 struct Toast {
     text: String,
@@ -33,6 +59,7 @@ pub struct App {
     sdl: SdlState,
 
     screen: Screen,
+    launcher_focus: usize,
     game_path: Option<String>,
     game_title: String,
     loading_game: bool,
@@ -80,6 +107,7 @@ impl App {
         splash_override: Option<bool>,
     ) -> anyhow::Result<Self> {
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
+        crate::tv_ui::apply_theme(&cc.egui_ctx);
         host.video.set_context(cc.egui_ctx.clone());
 
         let logo_texture = match splash::logo_image() {
@@ -139,6 +167,7 @@ impl App {
             } else {
                 Screen::Launcher
             },
+            launcher_focus: 0,
             game_path: None,
             game_title: String::new(),
             loading_game: false,
@@ -214,6 +243,7 @@ impl App {
                 }
                 WorkerEvent::Unloaded => {
                     self.screen = Screen::Launcher;
+                    self.launcher_focus = 0;
                     self.game_path = None;
                     self.loading_game = false;
                     self.overlay_open = false;
@@ -271,9 +301,9 @@ impl App {
         self.maybe_auto_start();
     }
 
-    fn handle_splash(&mut self, ctx: &egui::Context) {
+    fn handle_splash(&mut self, ctx: &egui::Context) -> bool {
         if self.screen != Screen::Splash {
-            return;
+            return false;
         }
         let elapsed = self.splash_start.elapsed();
         let fade_len = Duration::from_millis(600);
@@ -300,7 +330,9 @@ impl App {
         let controller = self.sdl.take_activity();
         if elapsed >= self.splash_duration || key || click || controller {
             self.finish_splash();
+            return true;
         }
+        false
     }
 
     fn splash(&mut self, ui: &mut egui::Ui) {
@@ -343,14 +375,14 @@ impl App {
                 rect.center_bottom() - egui::vec2(0.0, 46.0),
                 egui::Align2::CENTER_BOTTOM,
                 "Press any key or button to skip",
-                egui::FontId::proportional(14.0),
+                egui::FontId::proportional(18.0),
                 hint,
             );
 
             let progress = (elapsed / total).clamp(0.0, 1.0);
             let bar = egui::Rect::from_min_size(
-                egui::pos2(rect.center().x - 140.0, rect.bottom() - 28.0),
-                egui::vec2(280.0, 3.0),
+                egui::pos2(rect.center().x - 200.0, rect.bottom() - 28.0),
+                egui::vec2(400.0, 4.0),
             );
             ui.painter().rect_filled(
                 bar,
@@ -469,9 +501,55 @@ impl App {
             // snapshot live so the controller diagnostic window can show it.
             self.host.input.set(0, [0; 4]);
         }
-        let nav_active = self.overlay_open && !self.settings_open && !self.controller_open;
-        for nav in self.sdl.poll_menu_nav(nav_active) {
-            self.handle_overlay_nav(nav, ctx);
+        let nav_context = if self.file_browser.is_some() {
+            Some(NavContext::FileBrowser)
+        } else if self.overlay_open && !self.settings_open && !self.controller_open {
+            Some(NavContext::Overlay)
+        } else if self.screen == Screen::Launcher && !self.settings_open && !self.controller_open {
+            Some(NavContext::Launcher)
+        } else {
+            None
+        };
+        for nav in self.sdl.poll_menu_nav(nav_context.is_some()) {
+            match nav_context {
+                Some(NavContext::FileBrowser) => self.handle_file_browser_nav(nav),
+                Some(NavContext::Overlay) => self.handle_overlay_nav(nav, ctx),
+                Some(NavContext::Launcher) => self.handle_launcher_nav(nav, ctx),
+                None => {}
+            }
+        }
+    }
+
+    fn handle_frontend_keys(&mut self, ctx: &egui::Context) {
+        if self.file_browser.is_some() {
+            if let Some(nav) = key_to_nav(ctx) {
+                self.handle_file_browser_nav(nav);
+            }
+            return;
+        }
+        if self.screen == Screen::Launcher
+            && !self.settings_open
+            && !self.controller_open
+            && !ctx.egui_wants_keyboard_input()
+        {
+            if let Some(nav) = key_to_nav(ctx) {
+                self.handle_launcher_nav(nav, ctx);
+            }
+        }
+    }
+
+    fn handle_file_browser_nav(&mut self, nav: NavAction) {
+        let mut result = None;
+        let mut kind = None;
+        if let Some(browser) = self.file_browser.as_mut() {
+            kind = Some(browser.kind);
+            result = browser.navigate(nav);
+        }
+        if let Some(result) = result {
+            self.file_browser = None;
+            if let Some(kind) = kind {
+                self.apply_browse_result(result, kind);
+            }
         }
     }
 
@@ -679,6 +757,7 @@ impl App {
             .fast_forward
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.screen = Screen::Launcher;
+        self.launcher_focus = 0;
         self.overlay_open = false;
         self.settings_open = false;
         self.controller_open = false;
@@ -715,227 +794,313 @@ impl App {
         self.texture_size = [frame.width, frame.height];
     }
 
-    fn launcher(&mut self, ui: &mut egui::Ui) {
-        egui::CentralPanel::default().show(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if let Some(texture_id) = self.logo_texture.as_ref().map(|t| t.id()) {
-                        let (rect, _) =
-                            ui.allocate_exact_size(egui::vec2(58.0, 58.0), egui::Sense::hover());
-                        ui.painter().image(
-                            texture_id,
-                            rect,
-                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                            egui::Color32::WHITE,
-                        );
-                    }
-                    ui.vertical(|ui| {
-                        ui.heading("TsundereStation");
-                        ui.label(
-                            egui::RichText::new("A SwanStation frontend in Rust")
-                                .weak()
-                                .size(14.0),
-                        );
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if let Some(info) = &self.core_info {
-                            ui.weak(format!("{} core {}", info.name, info.version));
-                        } else {
-                            ui.spinner();
-                            ui.weak("Loading core…");
-                        }
-                    });
-                });
-                ui.add_space(6.0);
+    fn launcher_items(&self) -> Vec<LauncherItem> {
+        let mut items = vec![
+            LauncherItem::Play,
+            LauncherItem::BootBios,
+            LauncherItem::BrowseGame,
+        ];
+        for index in 0..self.config.recent_games.len() {
+            items.push(LauncherItem::RecentGame(index));
+        }
+        items.extend([
+            LauncherItem::AddBios,
+            LauncherItem::OpenBios,
+            LauncherItem::Controller,
+            LauncherItem::RescanControllers,
+            LauncherItem::ControllerSettings,
+            LauncherItem::ToggleSplash,
+            LauncherItem::ToggleFps,
+            LauncherItem::ToggleFullscreen,
+            LauncherItem::Settings,
+            LauncherItem::Quit,
+        ]);
+        items
+    }
 
-                if let Some(error) = &self.last_error {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
-                    ui.add_space(4.0);
+    fn launcher_label(&self, item: LauncherItem) -> String {
+        match item {
+            LauncherItem::Play => "Play".to_string(),
+            LauncherItem::BootBios => "Boot BIOS".to_string(),
+            LauncherItem::BrowseGame => "Browse game…".to_string(),
+            LauncherItem::RecentGame(index) => {
+                let path = self
+                    .config
+                    .recent_games
+                    .get(index)
+                    .map(String::as_str)
+                    .unwrap_or("Unknown game");
+                format!("Recent: {}", short_game_name(path))
+            }
+            LauncherItem::AddBios => "Add BIOS image…".to_string(),
+            LauncherItem::OpenBios => "Open BIOS folder".to_string(),
+            LauncherItem::Controller => format!(
+                "Controller: {}  (Left/Right)",
+                self.sdl.selected_name().unwrap_or("None detected")
+            ),
+            LauncherItem::RescanControllers => "Rescan controllers".to_string(),
+            LauncherItem::ControllerSettings => "Controller settings…".to_string(),
+            LauncherItem::ToggleSplash => format!(
+                "Show splash on startup: {}",
+                if self.config.show_splash { "On" } else { "Off" }
+            ),
+            LauncherItem::ToggleFps => format!(
+                "FPS/status overlay: {}",
+                if self.config.show_fps { "On" } else { "Off" }
+            ),
+            LauncherItem::ToggleFullscreen => "Toggle fullscreen".to_string(),
+            LauncherItem::Settings => "Settings…".to_string(),
+            LauncherItem::Quit => "Quit TsundereStation".to_string(),
+        }
+    }
+
+    fn cycle_controller(&mut self) {
+        let controllers = self.sdl.controllers().to_vec();
+        if controllers.is_empty() {
+            self.push_toast("No controller detected".into(), MessageKind::Warning, 3.0);
+            return;
+        }
+        let current = controllers
+            .iter()
+            .position(|c| c.guid == self.sdl.selected_guid());
+        let next = match current {
+            Some(index) => (index + 1) % controllers.len(),
+            None => 0,
+        };
+        let guid = controllers[next].guid.clone();
+        self.sdl.select_guid(&guid);
+        self.config.controller_guid = guid;
+        let _ = self.config.save();
+    }
+
+    fn open_browser(&mut self, kind: BrowseKind) {
+        let start = match kind {
+            BrowseKind::Game => {
+                let path = Path::new(&self.config.last_game);
+                if path.is_file() {
+                    path.parent()
+                        .map(Path::to_path_buf)
+                        .unwrap_or_else(crate::config::home_dir)
+                } else {
+                    crate::config::home_dir()
                 }
+            }
+            BrowseKind::Bios => crate::config::home_dir(),
+        };
+        let extensions = match kind {
+            BrowseKind::Game => self
+                .core_info
+                .as_ref()
+                .map(|info| {
+                    info.extensions
+                        .split('|')
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_else(|| {
+                    vec![
+                        "cue".into(),
+                        "bin".into(),
+                        "chd".into(),
+                        "iso".into(),
+                        "pbp".into(),
+                        "m3u".into(),
+                    ]
+                }),
+            BrowseKind::Bios => vec!["bin".into(), "rom".into(), "img".into()],
+        };
+        self.file_browser = Some(FileBrowser::new(kind, &start, extensions));
+    }
 
-                ui.group(|ui| {
-                    ui.heading("BIOS");
-                    ui.label(
-                        "BIOS is optional. If none is present, the built-in OpenBIOS is used. \
-                         Files must be valid PS1 BIOS images (512 KiB or 4 MiB). When several \
-                         images are present, the core picks one matching the disc region.",
-                    );
-                    ui.horizontal(|ui| {
-                        ui.label("Folder:");
-                        ui.monospace(self.config.bios_dir.display().to_string());
-                        if ui.button("Open").clicked() {
-                            let _ = std::process::Command::new("xdg-open")
-                                .arg(&self.config.bios_dir)
-                                .spawn();
-                        }
-                        if ui.button("Add BIOS image…").clicked() {
-                            self.file_browser = Some(FileBrowser::new(
-                                BrowseKind::Bios,
-                                &crate::config::home_dir(),
-                                vec!["bin".into(), "rom".into(), "img".into()],
-                            ));
-                        }
+    fn activate_launcher_item(&mut self, item: LauncherItem, ctx: &egui::Context) {
+        match item {
+            LauncherItem::Play => self.start_game(),
+            LauncherItem::BootBios => self.start_bios(),
+            LauncherItem::BrowseGame => self.open_browser(BrowseKind::Game),
+            LauncherItem::RecentGame(index) => {
+                if let Some(path) = self.config.recent_games.get(index).cloned() {
+                    self.config.last_game = path;
+                    let _ = self.config.save();
+                    self.start_game();
+                }
+            }
+            LauncherItem::AddBios => self.open_browser(BrowseKind::Bios),
+            LauncherItem::OpenBios => {
+                let _ = std::process::Command::new("xdg-open")
+                    .arg(&self.config.bios_dir)
+                    .spawn();
+            }
+            LauncherItem::Controller => self.controller_open = true,
+            LauncherItem::RescanControllers => {
+                self.sdl.refresh_controllers(None);
+                self.push_toast("Controllers rescanned".into(), MessageKind::Info, 2.0);
+            }
+            LauncherItem::ControllerSettings => self.controller_open = true,
+            LauncherItem::ToggleSplash => {
+                self.config.show_splash = !self.config.show_splash;
+                let _ = self.config.save();
+            }
+            LauncherItem::ToggleFps => self.toggle_fps_display(false),
+            LauncherItem::ToggleFullscreen => self.toggle_fullscreen(ctx),
+            LauncherItem::Settings => self.settings_open = true,
+            LauncherItem::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+        }
+    }
+
+    fn handle_launcher_nav(&mut self, nav: NavAction, ctx: &egui::Context) {
+        let items = self.launcher_items();
+        if items.is_empty() {
+            return;
+        }
+        if self.launcher_focus >= items.len() {
+            self.launcher_focus = 0;
+        }
+        match nav {
+            NavAction::Up => {
+                self.launcher_focus = (self.launcher_focus + items.len() - 1) % items.len();
+            }
+            NavAction::Down => {
+                self.launcher_focus = (self.launcher_focus + 1) % items.len();
+            }
+            NavAction::Left | NavAction::Right => {
+                if items[self.launcher_focus] == LauncherItem::Controller {
+                    self.cycle_controller();
+                }
+            }
+            NavAction::Confirm => {
+                let item = items[self.launcher_focus];
+                self.activate_launcher_item(item, ctx);
+            }
+            NavAction::Cancel => {}
+        }
+    }
+
+    fn launcher(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let items = self.launcher_items();
+        if self.launcher_focus >= items.len() {
+            self.launcher_focus = items.len().saturating_sub(1);
+        }
+
+        egui::CentralPanel::default().show(ui, |ui| {
+            if self.file_browser.is_none()
+                && !self.settings_open
+                && !self.controller_open
+            {
+                egui::Panel::bottom("launcher-hint")
+                    .show_separator_line(false)
+                    .show(ui, |ui| {
+                        controller_hint(
+                            ui,
+                            "D-pad / left stick: move  ·  Cross: select  ·  Left/Right: change controller",
+                        );
                     });
-                    if self.bios_files.is_empty() {
-                        ui.weak("No BIOS images in the folder. OpenBIOS will be used.");
-                    } else {
-                        for (name, size) in self.bios_files.clone() {
-                            let valid = matches!(size, 0x80000 | 0x400000 | 0x3E66F0);
+            }
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let max_width = 1100.0f32;
+                    let available = ui.available_width();
+                    let side = ((available - max_width) * 0.5).max(0.0);
+                    ui.horizontal_top(|ui| {
+                        ui.add_space(side);
+                        ui.vertical(|ui| {
+                            ui.set_max_width(max_width.min(available));
+                            ui.add_space(8.0);
+
                             ui.horizontal(|ui| {
-                                ui.monospace(name);
-                                let text = format!("{:.1} MiB", size as f64 / (1024.0 * 1024.0));
-                                if valid {
-                                    ui.weak(text);
-                                } else {
-                                    ui.colored_label(
-                                        egui::Color32::from_rgb(200, 150, 60),
-                                        format!("{text} — unexpected size"),
+                                if let Some(texture_id) =
+                                    self.logo_texture.as_ref().map(|t| t.id())
+                                {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(84.0, 84.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().image(
+                                        texture_id,
+                                        rect,
+                                        egui::Rect::from_min_max(
+                                            egui::pos2(0.0, 0.0),
+                                            egui::pos2(1.0, 1.0),
+                                        ),
+                                        egui::Color32::WHITE,
                                     );
                                 }
-                            });
-                        }
-                    }
-                });
-
-                ui.add_space(6.0);
-                ui.group(|ui| {
-                    ui.heading("Game");
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.config.last_game)
-                                .desired_width(560.0)
-                                .hint_text("/path/to/game.cue"),
-                        );
-                        if ui.button("Browse…").clicked() {
-                            let start = Path::new(&self.config.last_game)
-                                .parent()
-                                .map(|p| p.to_path_buf())
-                                .unwrap_or_else(crate::config::home_dir);
-                            let extensions = self
-                                .core_info
-                                .as_ref()
-                                .map(|i| {
-                                    i.extensions
-                                        .split('|')
-                                        .map(|s| s.to_string())
-                                        .collect::<Vec<_>>()
-                                })
-                                .unwrap_or_else(|| {
-                                    vec![
-                                        "cue".into(),
-                                        "bin".into(),
-                                        "chd".into(),
-                                        "iso".into(),
-                                        "pbp".into(),
-                                        "m3u".into(),
-                                    ]
+                                ui.vertical(|ui| {
+                                    ui.heading("TsundereStation");
+                                    ui.label(
+                                        egui::RichText::new(
+                                            "A SwanStation frontend in Rust",
+                                        )
+                                        .weak()
+                                        .size(18.0),
+                                    );
                                 });
-                            self.file_browser =
-                                Some(FileBrowser::new(BrowseKind::Game, &start, extensions));
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        let enabled = self.core_info.is_some() && !self.loading_game;
-                        if ui
-                            .add_enabled(
-                                enabled,
-                                egui::Button::new("Play").min_size(egui::vec2(110.0, 30.0)),
-                            )
-                            .clicked()
-                        {
-                            self.start_game();
-                        }
-                        if ui
-                            .add_enabled(
-                                self.core_info.is_some() && !self.loading_game,
-                                egui::Button::new("Boot BIOS").min_size(egui::vec2(100.0, 30.0)),
-                            )
-                            .clicked()
-                        {
-                            self.start_bios();
-                        }
-                        if self.loading_game {
-                            ui.spinner();
-                            ui.weak("Loading…");
-                        }
-                    });
-                    if !self.config.recent_games.is_empty() {
-                        ui.add_space(4.0);
-                        ui.label("Recent games");
-                        for path in self.config.recent_games.clone() {
-                            if ui.selectable_label(false, &path).clicked() {
-                                self.config.last_game = path;
-                            }
-                        }
-                    }
-                });
-
-                ui.add_space(6.0);
-                ui.group(|ui| {
-                    ui.heading("Controller");
-                    ui.horizontal(|ui| {
-                        let controllers = self.sdl.controllers().to_vec();
-                        let current = self
-                            .sdl
-                            .selected_name()
-                            .unwrap_or("No controller detected")
-                            .to_string();
-                        egui::ComboBox::from_id_salt("launcher-controller")
-                            .width(380.0)
-                            .selected_text(current)
-                            .show_ui(ui, |ui| {
-                                if controllers.is_empty() {
-                                    ui.weak("No SDL game controllers found");
-                                }
-                                for controller in &controllers {
-                                    let selected = self.sdl.selected_guid() == controller.guid;
-                                    if ui.selectable_label(selected, &controller.name).clicked() {
-                                        self.sdl.select_guid(&controller.guid);
-                                        self.config.controller_guid = controller.guid.clone();
-                                        let _ = self.config.save();
-                                    }
-                                }
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if let Some(info) = &self.core_info {
+                                            ui.weak(format!(
+                                                "{} core {}",
+                                                info.name, info.version
+                                            ));
+                                        } else {
+                                            ui.spinner();
+                                            ui.weak("Loading core…");
+                                        }
+                                    },
+                                );
                             });
-                        if ui.button("Rescan").clicked() {
-                            self.sdl.refresh_controllers(None);
-                        }
-                        if ui.button("Controller settings…").clicked() {
-                            self.controller_open = true;
-                        }
-                    });
-                    ui.weak("Press the PS/Guide button in-game to open the menu.");
-                });
 
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Settings…").clicked() {
-                        self.settings_open = true;
-                    }
-                    if ui.button("Toggle fullscreen").clicked() {
-                        self.toggle_fullscreen(ui.ctx());
-                    }
-                    if ui.button("Quit").clicked() {
-                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                    let mut show_splash = self.config.show_splash;
-                    if ui
-                        .checkbox(&mut show_splash, "Show splash on startup")
-                        .changed()
-                    {
-                        self.config.show_splash = show_splash;
-                        let _ = self.config.save();
-                    }
-                    let mut show_fps = self.config.show_fps;
-                    if ui
-                        .checkbox(&mut show_fps, "Show FPS/status overlay")
-                        .changed()
-                    {
-                        self.config.show_fps = show_fps;
-                        let _ = self.config.save();
-                    }
+                            ui.add_space(10.0);
+                            ui.label(egui::RichText::new("Game path").strong());
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(
+                                        &mut self.config.last_game,
+                                    )
+                                    .desired_width(700.0)
+                                    .hint_text("/path/to/game.cue"),
+                                );
+                            });
+                            ui.add_space(2.0);
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "BIOS: {} image(s) in {}",
+                                    self.bios_files.len(),
+                                    self.config.bios_dir.display()
+                                ))
+                                .small()
+                                .weak(),
+                            );
+                            ui.separator();
+
+                            for (index, item) in items.iter().enumerate() {
+                                if matches!(
+                                    item,
+                                    LauncherItem::AddBios
+                                        | LauncherItem::Controller
+                                        | LauncherItem::ToggleSplash
+                                        | LauncherItem::Settings
+                                ) {
+                                    ui.separator();
+                                }
+                                let focused = index == self.launcher_focus;
+                                let label = self.launcher_label(*item);
+                                let response = tv_row(ui, focused, &label);
+                                if response.clicked() {
+                                    self.launcher_focus = index;
+                                    self.activate_launcher_item(*item, &ctx);
+                                }
+                                if focused {
+                                    response.scroll_to_me(Some(egui::Align::Center));
+                                }
+                            }
+
+                            ui.add_space(12.0);
+                        });
+                    });
                 });
-            });
         });
     }
 
@@ -989,8 +1154,8 @@ impl App {
                     rect.left_top() + egui::vec2(10.0, 10.0),
                     egui::Align2::LEFT_TOP,
                     info,
-                    egui::FontId::monospace(13.0),
-                    egui::Color32::from_white_alpha(170),
+                    egui::FontId::monospace(17.0),
+                    egui::Color32::from_white_alpha(190),
                 );
             }
         });
@@ -1039,7 +1204,7 @@ impl App {
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                ui.set_min_width(400.0);
+                ui.set_min_width(620.0);
                 ui.heading(if self.paused { "Paused" } else { "Menu" });
                 ui.weak(if self.config.show_fps {
                     format!("{fps:.2} Hz · slot {}", self.quick_slot)
@@ -1050,7 +1215,7 @@ impl App {
                     ui.label("Slot");
                     egui::ComboBox::from_id_salt("save-slot")
                         .selected_text(self.quick_slot.to_string())
-                        .width(60.0)
+                        .width(80.0)
                         .show_ui(ui, |ui| {
                             for slot in 0..=9 {
                                 ui.selectable_value(&mut self.quick_slot, slot, slot.to_string());
@@ -1063,17 +1228,27 @@ impl App {
                     });
                 });
                 ui.separator();
-                for (index, label) in labels.iter().enumerate() {
-                    if ui
-                        .selectable_label(self.menu_selection == index, label)
-                        .clicked()
-                    {
-                        self.menu_selection = index;
-                        clicked = Some(index);
-                    }
-                }
+                egui::ScrollArea::vertical()
+                    .max_height(570.0)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for (index, label) in labels.iter().enumerate() {
+                            let focused = self.menu_selection == index;
+                            let response = tv_row(ui, focused, label);
+                            if response.clicked() {
+                                self.menu_selection = index;
+                                clicked = Some(index);
+                            }
+                            if focused {
+                                response.scroll_to_me(Some(egui::Align::Center));
+                            }
+                        }
+                    });
                 ui.separator();
-                ui.weak("D-pad/stick: move - Cross: select - Circle/PS: close - Left/Right: slot");
+                controller_hint(
+                    ui,
+                    "D-pad/stick: move  ·  Cross: select  ·  Circle/PS: close  ·  Left/Right: slot",
+                );
             });
 
         if let Some(index) = clicked {
@@ -1104,14 +1279,14 @@ impl App {
         egui::Window::new("Settings")
             .open(&mut open)
             .resizable(true)
-            .default_width(900.0)
-            .default_height(620.0)
+            .default_width(1200.0)
+            .default_height(700.0)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Search");
                     ui.add(
                         egui::TextEdit::singleline(&mut self.settings_search)
-                            .desired_width(260.0)
+                            .desired_width(320.0)
                             .hint_text("filter options"),
                     );
                     if ui.button("Reset all").clicked() {
@@ -1165,10 +1340,10 @@ impl App {
                     });
                     ui.separator();
                     ui.vertical(|ui| {
-                        ui.set_min_width(650.0);
+                        ui.set_min_width(850.0);
                         egui::ScrollArea::vertical()
                             .auto_shrink([false, false])
-                            .max_height(520.0)
+                            .max_height((ui.available_height() - 16.0).max(200.0))
                             .show(ui, |ui| {
                                 let search = self.settings_search.to_lowercase();
                                 let mut shown = 0;
@@ -1217,7 +1392,7 @@ impl App {
                                                 || option.info.contains("Restart")
                                                 || option.info.contains("restart");
                                             ui.vertical(|ui| {
-                                                ui.set_min_width(300.0);
+                                                ui.set_min_width(380.0);
                                                 ui.strong(&option.label);
                                                 if restart {
                                                     ui.small(
@@ -1232,7 +1407,7 @@ impl App {
                                                 let response = egui::ComboBox::from_id_salt(
                                                     format!("opt-{}", option.key),
                                                 )
-                                                .width(250.0)
+                                                .width(300.0)
                                                 .selected_text(current_label)
                                                 .show_ui(ui, |ui| {
                                                     for (value, label) in &option.values {
@@ -1338,7 +1513,7 @@ impl App {
         egui::Window::new("Controller")
             .open(&mut open)
             .resizable(false)
-            .default_width(520.0)
+            .default_width(700.0)
             .show(ctx, |ui| {
                 ui.heading("SDL game controller");
                 let controllers = sdl.controllers().to_vec();
@@ -1482,45 +1657,55 @@ impl App {
             return;
         }
         self.file_browser = None;
-        if let (BrowseResult::Chosen(path), Some(kind)) = (result, kind) {
-            match kind {
-                BrowseKind::Game => {
-                    self.config.last_game = path.to_string_lossy().to_string();
-                    let _ = self.config.save();
+        if let Some(kind) = kind {
+            self.apply_browse_result(result, kind);
+        }
+    }
+
+    fn apply_browse_result(&mut self, result: BrowseResult, kind: BrowseKind) {
+        let BrowseResult::Chosen(path) = result else {
+            return;
+        };
+        match kind {
+            BrowseKind::Game => {
+                self.config.last_game = path.to_string_lossy().to_string();
+                let _ = self.config.save();
+                // Put the launcher focus back on Play so the next Cross starts
+                // the newly selected game.
+                self.launcher_focus = 0;
+            }
+            BrowseKind::Bios => {
+                let name = path
+                    .file_name()
+                    .map(|s| s.to_os_string())
+                    .unwrap_or_else(|| "bios.bin".into());
+                let dest = self.config.bios_dir.join(name);
+                let same_file =
+                    std::fs::canonicalize(&path).ok() == std::fs::canonicalize(&dest).ok();
+                if same_file {
+                    self.refresh_bios_files();
+                    self.push_toast(
+                        format!("BIOS already in {}", dest.display()),
+                        MessageKind::Info,
+                        4.0,
+                    );
+                    return;
                 }
-                BrowseKind::Bios => {
-                    let name = path
-                        .file_name()
-                        .map(|s| s.to_os_string())
-                        .unwrap_or_else(|| "bios.bin".into());
-                    let dest = self.config.bios_dir.join(name);
-                    let same_file =
-                        std::fs::canonicalize(&path).ok() == std::fs::canonicalize(&dest).ok();
-                    if same_file {
+                match std::fs::copy(&path, &dest) {
+                    Ok(_) => {
                         self.refresh_bios_files();
                         self.push_toast(
-                            format!("BIOS already in {}", dest.display()),
+                            format!("Added BIOS {}", dest.display()),
                             MessageKind::Info,
                             4.0,
                         );
-                        return;
                     }
-                    match std::fs::copy(&path, &dest) {
-                        Ok(_) => {
-                            self.refresh_bios_files();
-                            self.push_toast(
-                                format!("Added BIOS {}", dest.display()),
-                                MessageKind::Info,
-                                4.0,
-                            );
-                        }
-                        Err(e) => {
-                            self.push_toast(
-                                format!("Could not copy BIOS: {e}"),
-                                MessageKind::Error,
-                                6.0,
-                            );
-                        }
+                    Err(e) => {
+                        self.push_toast(
+                            format!("Could not copy BIOS: {e}"),
+                            MessageKind::Error,
+                            6.0,
+                        );
                     }
                 }
             }
@@ -1535,7 +1720,7 @@ impl App {
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-16.0, 16.0))
             .show(ctx, |ui| {
-                ui.set_max_width(430.0);
+                ui.set_max_width(560.0);
                 for toast in &self.toasts {
                     let color = match toast.kind {
                         MessageKind::Info => egui::Color32::from_rgb(40, 90, 140),
@@ -1562,7 +1747,15 @@ impl eframe::App for App {
         self.process_worker_events();
         self.process_host_messages();
         self.poll_sdl(&ctx);
-        self.handle_splash(&ctx);
+        let splash_finished = self.handle_splash(&ctx);
+        if splash_finished {
+            // Consume the key/click/controller press that dismissed the splash
+            // instead of letting it activate a launcher row in the same frame.
+            self.splash(ui);
+            ctx.request_repaint_after(Duration::from_millis(16));
+            return;
+        }
+        self.handle_frontend_keys(&ctx);
         self.handle_hotkeys(&ctx);
 
         match self.screen {
@@ -1588,4 +1781,38 @@ impl eframe::App for App {
 
 fn config_port_device(config: &Config) -> Option<u32> {
     config.port1_device
+}
+
+fn key_to_nav(ctx: &egui::Context) -> Option<NavAction> {
+    if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+        Some(NavAction::Up)
+    } else if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+        Some(NavAction::Down)
+    } else if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
+        Some(NavAction::Left)
+    } else if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
+        Some(NavAction::Right)
+    } else if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+        Some(NavAction::Confirm)
+    } else if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        Some(NavAction::Cancel)
+    } else {
+        None
+    }
+}
+
+fn short_game_name(path: &str) -> String {
+    let path = Path::new(path);
+    let name = path
+        .file_stem()
+        .or_else(|| path.file_name())
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.display().to_string());
+    if name.chars().count() > 70 {
+        let mut out: String = name.chars().take(70).collect();
+        out.push('…');
+        out
+    } else {
+        name
+    }
 }

@@ -1,3 +1,5 @@
+use crate::sdl_input::NavAction;
+use crate::tv_ui::{controller_hint, tv_row};
 use eframe::egui;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,6 +24,7 @@ pub struct FileBrowser {
     extensions: Vec<String>,
     entries: Vec<(PathBuf, String, bool)>,
     selected: Option<PathBuf>,
+    focus: usize,
     error: Option<String>,
     needs_refresh: bool,
 }
@@ -43,10 +46,13 @@ impl FileBrowser {
             extensions: extensions.into_iter().map(|e| e.to_lowercase()).collect(),
             entries: Vec::new(),
             selected: None,
+            focus: 0,
             error: None,
             needs_refresh: true,
         };
         browser.refresh();
+        browser.focus = if browser.entries.len() > 1 { 1 } else { 0 };
+        browser.update_selected_from_focus();
         browser
     }
 
@@ -90,6 +96,69 @@ impl FileBrowser {
             (false, true) => std::cmp::Ordering::Greater,
             _ => a.1.to_lowercase().cmp(&b.1.to_lowercase()),
         });
+        if let Some(parent) = self.cwd.parent() {
+            self.entries
+                .insert(0, (parent.to_path_buf(), "..".to_string(), true));
+        }
+        if self.entries.is_empty() {
+            self.focus = 0;
+        } else if self.focus >= self.entries.len() {
+            self.focus = self.entries.len() - 1;
+        }
+        self.update_selected_from_focus();
+    }
+
+    /// Controller/keyboard navigation. Returns Some when the browser should
+    /// close or a file has been chosen.
+    pub fn navigate(&mut self, action: NavAction) -> Option<BrowseResult> {
+        if self.needs_refresh {
+            self.refresh();
+        }
+        if self.entries.is_empty() {
+            return match action {
+                NavAction::Cancel => {
+                    self.open = false;
+                    Some(BrowseResult::Cancelled)
+                }
+                _ => None,
+            };
+        }
+        match action {
+            NavAction::Up => {
+                self.focus = (self.focus + self.entries.len() - 1) % self.entries.len();
+                self.update_selected_from_focus();
+            }
+            NavAction::Down => {
+                self.focus = (self.focus + 1) % self.entries.len();
+                self.update_selected_from_focus();
+            }
+            NavAction::Left | NavAction::Right => {}
+            NavAction::Confirm => {
+                let (path, _name, is_dir) = self.entries[self.focus].clone();
+                if is_dir {
+                    self.cwd = path;
+                    self.selected = None;
+                    self.focus = 1;
+                    self.needs_refresh = true;
+                } else {
+                    self.selected = Some(path.clone());
+                    self.open = false;
+                    return Some(BrowseResult::Chosen(path));
+                }
+            }
+            NavAction::Cancel => {
+                self.open = false;
+                return Some(BrowseResult::Cancelled);
+            }
+        }
+        None
+    }
+
+    fn update_selected_from_focus(&mut self) {
+        self.selected = self
+            .entries
+            .get(self.focus)
+            .and_then(|(path, _name, is_dir)| if *is_dir { None } else { Some(path.clone()) });
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> BrowseResult {
@@ -110,8 +179,8 @@ impl FileBrowser {
         })
         .open(&mut open)
         .resizable(true)
-        .default_width(760.0)
-        .default_height(560.0)
+        .default_width(1100.0)
+        .default_height(700.0)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Up").clicked() {
@@ -138,35 +207,31 @@ impl FileBrowser {
 
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
-                .max_height(ui.available_height() - 48.0)
+                .max_height((ui.available_height() - 140.0).max(120.0))
                 .show(ui, |ui| {
-                    egui::Grid::new("file-browser-grid")
-                        .num_columns(2)
-                        .striped(true)
-                        .show(ui, |ui| {
-                            for (path, name, is_dir) in &self.entries {
-                                let label = if *is_dir {
-                                    format!("[dir] {name}")
-                                } else {
-                                    format!("[file] {name}")
-                                };
-                                let selected = self.selected.as_ref() == Some(path);
-                                if ui.selectable_label(selected, label).clicked() {
-                                    if *is_dir {
-                                        navigate_to = Some(path.clone());
-                                    } else {
-                                        self.selected = Some(path.clone());
-                                    }
-                                }
-                                if *is_dir {
-                                    ui.label("");
-                                } else {
-                                    let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-                                    ui.weak(format_size(size));
-                                }
-                                ui.end_row();
+                    for (index, (path, name, is_dir)) in self.entries.iter().enumerate() {
+                        let label = if name == ".." {
+                            ".. (parent directory)".to_string()
+                        } else if *is_dir {
+                            format!("[dir] {name}")
+                        } else {
+                            let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+                            format!("[file] {name}  —  {}", format_size(size))
+                        };
+                        let focused = self.focus == index;
+                        let response = tv_row(ui, focused, &label);
+                        if response.clicked() {
+                            self.focus = index;
+                            if *is_dir {
+                                navigate_to = Some(path.clone());
+                            } else {
+                                self.selected = Some(path.clone());
                             }
-                        });
+                        }
+                        if focused {
+                            response.scroll_to_me(Some(egui::Align::Center));
+                        }
+                    }
                 });
 
             ui.separator();
@@ -187,11 +252,16 @@ impl FileBrowser {
                     ui.weak(path.display().to_string());
                 }
             });
+            controller_hint(
+                ui,
+                "Cross: open/choose  ·  Circle: close  ·  .. row: parent",
+            );
         });
 
         if let Some(dir) = navigate_to {
             self.cwd = dir;
             self.selected = None;
+            self.focus = 1;
             self.needs_refresh = true;
         }
 

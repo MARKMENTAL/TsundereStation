@@ -5,6 +5,7 @@ mod filebrowser;
 mod libretro;
 mod sdl_input;
 mod splash;
+mod tv_ui;
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
@@ -90,8 +91,8 @@ fn main() -> Result<()> {
     };
 
     let mut viewport = eframe::egui::ViewportBuilder::default()
-        .with_inner_size([1100.0, 720.0])
-        .with_min_inner_size([800.0, 520.0])
+        .with_inner_size([1280.0, 800.0])
+        .with_min_inner_size([1000.0, 640.0])
         .with_title("TsundereStation")
         .with_app_id("tsunderestation");
     match splash::window_icon() {
