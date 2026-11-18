@@ -3,6 +3,7 @@ use crate::emu::{Command, WorkerEvent, WorkerHandle};
 use crate::filebrowser::{BrowseKind, BrowseResult, FileBrowser};
 use crate::libretro::host::{HostState, MessageKind};
 use crate::libretro::loader::{state_path, CoreInfo};
+use crate::memory_card::MemoryCardManager;
 use crate::sdl_input::{NavAction, SdlState};
 use crate::splash::{self, SplashAudio};
 use crate::theme::{self, Theme, UiTheme};
@@ -39,6 +40,7 @@ enum LauncherItem {
     Controller,
     RescanControllers,
     ControllerSettings,
+    MemoryCardManager,
     ToggleSplash,
     ToggleFps,
     ToggleFullscreen,
@@ -74,6 +76,7 @@ pub struct App {
     settings_category: String,
     settings_search: String,
     controller_open: bool,
+    memory_card: MemoryCardManager,
     quick_slot: u32,
 
     texture: Option<egui::TextureHandle>,
@@ -169,6 +172,10 @@ impl App {
 
         let port_device = config_port_device(&config);
         let splash_seconds = config.splash_seconds;
+        let memory_card = MemoryCardManager::new(
+            config.save_dir.clone(),
+            config.memory_card_source_dir.clone(),
+        );
         let mut app = Self {
             config,
             host,
@@ -193,6 +200,7 @@ impl App {
             settings_category: String::new(),
             settings_search: String::new(),
             controller_open: false,
+            memory_card,
             quick_slot: 0,
             texture: None,
             texture_seq: 0,
@@ -267,6 +275,7 @@ impl App {
                     self.paused_by_overlay = false;
                     self.settings_open = false;
                     self.controller_open = false;
+                    self.memory_card.open = false;
                     self.sdl.clear_input_lockout();
                     self.host.input.set(0, [0; 4]);
                     self.host
@@ -819,6 +828,7 @@ impl App {
             LauncherItem::Controller,
             LauncherItem::RescanControllers,
             LauncherItem::ControllerSettings,
+            LauncherItem::MemoryCardManager,
             LauncherItem::ToggleSplash,
             LauncherItem::ToggleFps,
             LauncherItem::ToggleFullscreen,
@@ -850,6 +860,7 @@ impl App {
             ),
             LauncherItem::RescanControllers => "Rescan controllers".to_string(),
             LauncherItem::ControllerSettings => "Controller settings…".to_string(),
+            LauncherItem::MemoryCardManager => "Memory Card Manager…".to_string(),
             LauncherItem::ToggleSplash => format!(
                 "Show splash on startup: {}",
                 if self.config.show_splash { "On" } else { "Off" }
@@ -896,6 +907,7 @@ impl App {
                 }
             }
             BrowseKind::Bios => crate::config::home_dir(),
+            BrowseKind::MemoryCard => crate::config::home_dir(),
         };
         let extensions = match kind {
             BrowseKind::Game => self
@@ -918,6 +930,9 @@ impl App {
                     ]
                 }),
             BrowseKind::Bios => vec!["bin".into(), "rom".into(), "img".into()],
+            BrowseKind::MemoryCard => {
+                vec!["srm".into(), "mcd".into(), "mcr".into(), "gme".into()]
+            }
         };
         self.file_browser = Some(FileBrowser::new(kind, &start, extensions));
     }
@@ -946,6 +961,7 @@ impl App {
                 self.push_toast("Controllers rescanned".into(), MessageKind::Info, 2.0);
             }
             LauncherItem::ControllerSettings => self.controller_open = true,
+            LauncherItem::MemoryCardManager => self.memory_card.open(),
             LauncherItem::ToggleSplash => {
                 self.config.show_splash = !self.config.show_splash;
                 let _ = self.config.save();
@@ -996,6 +1012,7 @@ impl App {
             if self.file_browser.is_none()
                 && !self.settings_open
                 && !self.controller_open
+                && !self.memory_card.open
             {
                 egui::Panel::bottom("launcher-hint")
                     .show_separator_line(false)
@@ -1096,6 +1113,7 @@ impl App {
                                     item,
                                     LauncherItem::AddBios
                                         | LauncherItem::Controller
+                                        | LauncherItem::MemoryCardManager
                                         | LauncherItem::ToggleSplash
                                         | LauncherItem::Settings
                                 ) {
@@ -1810,6 +1828,21 @@ impl App {
         }
     }
 
+    fn memory_card_window(&mut self, ctx: &egui::Context) {
+        if !self.memory_card.open {
+            return;
+        }
+        let toast = self.memory_card.show(ctx, &self.ui_theme);
+        if self.memory_card.source_dir_dirty {
+            self.config.memory_card_source_dir = self.memory_card.source_dir.clone();
+            let _ = self.config.save();
+            self.memory_card.source_dir_dirty = false;
+        }
+        if let Some((text, kind)) = toast {
+            self.push_toast(text, kind, 4.0);
+        }
+    }
+
     fn browser_window(&mut self, ctx: &egui::Context) {
         let mut result = BrowseResult::None;
         let kind = self.file_browser.as_ref().map(|b| b.kind);
@@ -1873,6 +1906,9 @@ impl App {
                     }
                 }
             }
+            BrowseKind::MemoryCard => {
+                // The Memory Card Manager owns its own file browser.
+            }
         }
     }
 
@@ -1932,6 +1968,7 @@ impl eframe::App for App {
         self.settings_window(&ctx);
         self.controller_window(&ctx);
         self.browser_window(&ctx);
+        self.memory_card_window(&ctx);
         if self.screen != Screen::Splash {
             self.draw_toasts(&ctx);
         }

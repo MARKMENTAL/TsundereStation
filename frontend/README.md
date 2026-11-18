@@ -172,12 +172,47 @@ normal = ["#101018", "#ff5555", "#55ff55", "#ffff55", "#5555ff", "#ff55ff", "#55
 bright = ["#333340", "#ff7777", "#77ff77", "#ffff77", "#7777ff", "#ff77ff", "#77ffff", "#ffffff"]
 ```
 
+## Memory Card Manager
+
+Launch **Memory Card Manager…** from the launcher to inspect and edit PS1
+memory cards without leaving TsundereStation.
+
+- Local cards are read from TsundereStation’s save directory
+  (`~/.local/share/tsunderestation/saves` by default).
+- DuckStation `.mcd` cards and RetroArch `.srm` cards can be scanned from a
+  separate source directory, or opened directly with **Open source card…**.
+- Raw `.srm`, `.mcd` and `.mcr` images share the same 131072-byte layout.
+  Moving a card between emulators only changes its filename convention.
+- DexDrive `.gme` files can be listed, converted to `.srm`/`.mcd`, or used as a
+  source for importing individual saves. Headerless `.gme` files are accepted
+  with a warning.
+- Saved games can be imported into another raw card, deleted, or exported as a
+  PNG icon with optional scale, circular frame and palette remapping.
+- DuckStation cards copied into TsundereStation default to the game name without
+  the DuckStation `_SLOT` suffix and use `.srm`, because the emulator looks up
+  memory cards by game filename.
+- The manager only copies/imports into TsundereStation. It intentionally does
+  not install cards back into other emulators; copy the resulting `.srm`/`.mcd`
+  manually if needed.
+
+Destructive operations ask for confirmation first. Existing cards are staged
+through temporary files, re-validated and backed up as
+`<name>.<ext>.japs1me-bak` before being replaced. `.gme` conversion refuses to
+overwrite an existing output. Keep an independent backup of anything
+irreplaceable and close the emulator before replacing a card it is using.
+
+The card-format engine is adapted from JAPS1ME (GPL-3.0-or-later). The nested
+`JAPS1ME/` reference checkout is a separate, gitignored project and is not
+required to build TsundereStation.
+
 ## Data locations
 
 Following the XDG base directory spec:
 
 - Config: `~/.config/tsunderestation/config.toml`
 - Optional themes: `~/.config/tsunderestation/themes.toml`
+- Memory-card import source: configurable in the Memory Card Manager and stored
+  as `memory_card_source_dir` in `config.toml`
 - BIOS images: `~/.local/share/tsunderestation/bios/`
 - Memory cards: `~/.local/share/tsunderestation/saves/*.srm`
 - Save states: `~/.local/share/tsunderestation/states/*.state`
@@ -269,6 +304,9 @@ core next to the executable, in the current directory, in
   core” button (the current game is reloaded automatically).
 - Audio output uses SDL's default device at 44.1 kHz. If no compatible device is
   available the frontend still runs, silently.
+- The Memory Card Manager follows JAPS1ME’s scope: it does not format entire
+  cards, convert raw cards back to `.gme`, handle `.mcs`/`.psx` single-save
+  files, or talk to DexDrive hardware.
 
 ## Layout
 
@@ -283,6 +321,7 @@ core next to the executable, in the current directory, in
   and custom window headers.
 - `src/tv_ui.rs`: large full-width TV rows and controller hints.
 - `src/config.rs`: config schema, XDG paths, legacy migration and core discovery.
+- `src/memory_card/`: vendored JAPS1ME card engine and the Memory Card Manager UI.
 - `src/filebrowser.rs`: small built-in file picker.
 - `assets/`: embedded themes, logo, splash motif and desktop icon.
 - `packaging/`: desktop entry and AppImage build script.

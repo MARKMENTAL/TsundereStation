@@ -3,6 +3,7 @@ mod config;
 mod emu;
 mod filebrowser;
 mod libretro;
+mod memory_card;
 mod sdl_input;
 mod splash;
 mod theme;

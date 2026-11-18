@@ -18,6 +18,7 @@ The front-end intentionally stays small:
 - TV-sized, controller-friendly launcher, file browser and pause menu.
 - Mouse/keyboard Settings and Controller windows.
 - Save states, memory cards, BIOS management and core options.
+- Memory Card Manager for `.srm`/`.mcd`/`.gme` cards, including DuckStation/RetroArch import and DexDrive conversion.
 - Themeable UI with JAPS1ME as the default.
 - A short branded startup splash and logo.
 
@@ -92,13 +93,13 @@ yet. The build script runs the packaged binary's `--selftest` unless disabled.
 
 ## Version and artifact policy
 
-- Current version: **0.1.1**.
+- Current version: **0.2.0**.
 - Do not bump the version for ordinary fixes or documentation changes unless
   explicitly asked.
 - Do not rename the AppImage major/minor path casually. Rebuild the existing
   version in place for fixes.
 - After rebuilding, report the new SHA256 of
-  `dist/TsundereStation-0.1.1-x86_64.AppImage`.
+  `dist/TsundereStation-0.2.0-x86_64.AppImage`.
 - Documentation-only changes do not require rebuilding the AppImage.
 
 ## Source map
@@ -111,6 +112,7 @@ yet. The build script runs the packaged binary's `--selftest` unless disabled.
 | `src/tv_ui.rs` | Large full-width TV rows and controller hints. |
 | `src/filebrowser.rs` | Built-in file browser for games and BIOS images. |
 | `src/config.rs` | Config schema, XDG paths, legacy migration, core search paths. |
+| `src/memory_card/` | Vendored JAPS1ME card engine and Memory Card Manager UI. |
 | `src/emu.rs` | Emulation worker thread, commands, save states and memory cards. |
 | `src/sdl_input.rs` | SDL controller discovery, mapping, rumble, navigation and shared audio callback. |
 | `src/splash.rs` | Embedded logo/motif decoding and window icon. |
@@ -147,7 +149,10 @@ from SDL to libretro input state.
 - Launcher, file-browser and pause-menu rows are full-width and at least 52 px
   tall. Focused rows get a strong outline and controller hints stay visible.
 - Controller navigation covers the launcher, file browser and pause overlay.
-  Settings and Controller windows are mouse/keyboard for now.
+  Settings, Controller and Memory Card Manager windows are mouse/keyboard for now.
+- The Memory Card Manager opens from the launcher and uses the same custom
+  accent header as Settings. Keep one outer scroll area for its details pane;
+  nesting save-list and detail scroll areas makes lower controls unreliable.
 - JAPS1ME is the default theme. Do not change the default without an explicit
   request.
 - Keep service integrations and extra platforms out of scope (see Non-goals).
@@ -279,8 +284,9 @@ Config follows the XDG base directory spec:
 - Save states: `~/.local/share/tsunderestation/states/*.state`
 
 `Config` uses serde defaults. New fields must be backward compatible with
-existing config files. The app migrates the old `swanstation-ui` config/data
-identity on first run.
+existing config files. `memory_card_source_dir` remembers the last external
+DuckStation/RetroArch card directory. The app migrates the old `swanstation-ui`
+config/data identity on first run.
 
 Core discovery order includes: configured core path, `TSUNDERESTATION_CORE`,
 `SWANSTATION_CORE`, paths next to the executable, the current directory,
@@ -295,6 +301,58 @@ Useful flags:
 
 For isolated manual testing, set `XDG_CONFIG_HOME` and `XDG_DATA_HOME` to
 temporary directories. `RUST_LOG=info` is useful for libretro/host diagnostics.
+
+## Memory card manager
+
+The Memory Card Manager is a vendored, UI-adapted port of the JAPS1ME card
+engine. Keep the attribution headers in `src/memory_card/` and keep the
+GPL-3.0-or-later license compatible.
+
+- `src/memory_card/card.rs` — raw card parsing, slots, link chains and titles.
+- `src/memory_card/gme.rs` — DexDrive `.gme` parsing, including headerless files.
+- `src/memory_card/import.rs` — save import and overwrite.
+- `src/memory_card/delete.rs` — save deletion.
+- `src/memory_card/icon.rs` / `icon_png.rs` — save icon decode and PNG export.
+- `src/memory_card/io.rs` — format detection, directory scanning, naming,
+  backups and atomic writes.
+- `src/memory_card/ui.rs` — egui window, card lists, save lists and confirmations.
+
+Card invariants:
+
+- Raw card = exactly 131072 bytes starting with `MC`.
+- `.gme` = 3904-byte DexDrive header + 131072-byte raw card (134976 bytes).
+- `.srm`, `.mcd` and `.mcr` are the same raw card layout; only naming
+  conventions differ.
+- TsundereStation local cards live in `Config::save_dir` and must use `.srm`
+  names matching the game filename.
+- DuckStation uses `.mcd`; RetroArch uses `.srm`.
+- When copying a DuckStation card into TsundereStation, strip a trailing
+  `_SLOT` suffix and use `.srm` by default, but keep the destination name
+  editable.
+- A DexDrive `.gme` is read-only as a source; copying or importing converts it
+  to raw bytes.
+
+Safety rules:
+
+- All writes are staged in a temporary file, re-parsed and then persisted.
+- Never modify DuckStation/RetroArch source cards during import; copy into the
+  local directory first.
+- Back up targets to `<card>.japs1me-bak` before overwrite or delete.
+- `.gme` conversion refuses to overwrite an existing output.
+- Destructive operations require a modal confirmation.
+- The TsundereStation UI intentionally has no install-back action. It imports
+  and copies cards into TsundereStation only; moving a card back to another
+  emulator is a manual file operation.
+- Do not use a user's only card for tests. Use temp dirs and synthetic cards;
+  treat `JAPS1ME/save-games/` as read-only fixtures.
+
+`frontend/JAPS1ME/` is a separate nested Git repository and a reference
+implementation, ignored by `frontend/.gitignore`. It is not a build dependency.
+The vendored copy under `src/memory_card/` is the frontend source of truth.
+Changes to JAPS1ME must be tested and committed in that repository. Its dev
+branch adds a `TsundereStation` install target for the JAPS1ME CLI (`.srm`,
+detected from a `tsunderestation` path component); that is separate from the
+TsundereStation UI, which has no install-back action.
 
 ## Testing and verification
 
@@ -315,6 +373,25 @@ Palette/contrast changes must keep these tests passing:
 - `japs1me_pink_uses_black_text`
 - `pathological_external_theme_is_repaired`
 
+Memory-card changes must keep the ported card tests passing, including:
+
+- `.gme` canonical/headerless parsing
+- raw card parsing and link chains
+- import, overwrite, duplicate and full-card rejection
+- delete and re-parse
+- convert refusing overwrite
+- DuckStation `_SLOT` stripping and TsundereStation `.srm` naming
+- backup creation and atomic copy
+
+When modifying `frontend/JAPS1ME/`, also run its own checks:
+
+```sh
+cd JAPS1ME
+cargo fmt --check
+cargo test
+cargo clippy --all-targets -- -D warnings
+```
+
 Visual checklist for UI changes:
 
 - JAPS1ME Settings: black “Settings” header and black “All options” on pink.
@@ -324,12 +401,14 @@ Visual checklist for UI changes:
 - An external theme loaded from `~/.config/tsunderestation/themes.toml`.
 - Settings/Controller/File Browser custom headers and close buttons.
 - Toast text on info/warning/error backgrounds.
+- Memory Card Manager: launcher entry, local card list, save list and icon preview.
+- `.gme` warning and conversion, DuckStation card copy, duplicate import confirmation, delete confirmation and icon export.
 
 For AppImage changes, build the AppImage and run its selftest:
 
 ```sh
 ./packaging/build-appimage.sh --skip-build
-sha256sum dist/TsundereStation-0.1.1-x86_64.AppImage
+sha256sum dist/TsundereStation-0.2.0-x86_64.AppImage
 ```
 
 ## Change checklist

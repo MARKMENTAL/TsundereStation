@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 pub enum BrowseKind {
     Game,
     Bios,
+    MemoryCard,
 }
 
 #[derive(Clone, Debug)]
@@ -177,6 +178,7 @@ impl FileBrowser {
         let title = match self.kind {
             BrowseKind::Game => "Choose a game",
             BrowseKind::Bios => "Choose a BIOS image",
+            BrowseKind::MemoryCard => "Choose a memory card",
         };
         let window_frame = theme::window_frame(&ctx.global_style(), ui_theme);
 

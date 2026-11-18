@@ -65,6 +65,10 @@ good, controller-friendly TV UI. No Discord integration, no RetroAchievements,
 no trophy popups, no bells and whistles — just the core, the games, and a
 tsundere attitude.
 
+It includes a built-in Memory Card Manager for `.srm`, `.mcd` and DexDrive
+`.gme` cards, with DuckStation/RetroArch import, save import/delete, icon
+export and safe backups.
+
 It lives in [`frontend/`](frontend/). See
 [`frontend/README.md`](frontend/README.md) for build, usage and desktop-install
 instructions, and [`frontend/AGENTS.md`](frontend/AGENTS.md) for implementation

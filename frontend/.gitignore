@@ -1,3 +1,5 @@
 /target
 /dist/
 /packaging/tools/
+# Vendored reference checkout; the ported code lives in src/memory_card/.
+JAPS1ME/
