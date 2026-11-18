@@ -5,6 +5,7 @@ mod filebrowser;
 mod libretro;
 mod sdl_input;
 mod splash;
+mod theme;
 mod tv_ui;
 
 use anyhow::{Context, Result};
@@ -47,9 +48,13 @@ fn main() -> Result<()> {
             "--no-splash" => splash_override = Some(false),
             "--splash" => splash_override = Some(true),
             "--selftest" => selftest = true,
+            "--version" | "-V" => {
+                println!("TsundereStation {}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
             "--help" | "-h" => {
                 println!(
-                    "tsunderestation [--core <core.so>] [--game <disc>] [--boot-bios] [--bios-dir <dir>] [--no-splash] [--splash] [--selftest]"
+                    "tsunderestation [--core <core.so>] [--game <disc>] [--boot-bios] [--bios-dir <dir>] [--no-splash] [--splash] [--selftest] [--version]"
                 );
                 return Ok(());
             }

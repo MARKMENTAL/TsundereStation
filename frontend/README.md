@@ -54,6 +54,9 @@ Useful flags:
 
 # Headless smoke test: boot BIOS, run frames, save/load state, dump a frame
 ./target/release/tsunderestation --selftest
+
+# Show the frontend version
+./target/release/tsunderestation --version
 ```
 
 The splash is shown for about four seconds and is skipped by any keyboard key,
@@ -114,11 +117,44 @@ AppImage itself runs standalone. The app’s config, BIOS, saves and states stil
 live under the usual `~/.config/tsunderestation` and
 `~/.local/share/tsunderestation` paths.
 
+## Themes
+
+The frontend ships with the JAPS1ME theme selected by default, plus the complete
+theme list embedded in `assets/themes.toml`. All UI colors, focus states,
+warnings, errors, toasts and the splash accent follow the selected theme.
+
+Select a theme in **Settings → Appearance**. The theme list shows each entry with
+its own foreground/background and all 16 ANSI colors, and applies immediately.
+The selection is stored as `theme = "<name>"` in the config file.
+
+Enabled UI text keeps at least a **2.5:1** contrast ratio against its background.
+Text on accent, focus, selected and toast fills is black or white, whichever has
+the higher contrast ratio. If a theme's own foreground, muted or semantic colors
+fall below the floor, those rendered text colors are adjusted toward black or
+white by the smallest amount needed; the theme file and the ANSI color swatches
+keep their original values.
+
+Optional extra themes can be added in
+`~/.config/tsunderestation/themes.toml`. Its entries are appended to the embedded
+list; an entry with the same name updates the built-in theme in place. Use the
+**Reload themes** button in Appearance after editing the file.
+
+The theme file uses the same TOML shape as the embedded file:
+
+```toml
+["My Theme"]
+foreground = "#f5f5f4"
+background = "#101018"
+normal = ["#101018", "#ff5555", "#55ff55", "#ffff55", "#5555ff", "#ff55ff", "#55ffff", "#f5f5f4"]
+bright = ["#333340", "#ff7777", "#77ff77", "#ffff77", "#7777ff", "#ff77ff", "#77ffff", "#ffffff"]
+```
+
 ## Data locations
 
 Following the XDG base directory spec:
 
 - Config: `~/.config/tsunderestation/config.toml`
+- Optional themes: `~/.config/tsunderestation/themes.toml`
 - BIOS images: `~/.local/share/tsunderestation/bios/`
 - Memory cards: `~/.local/share/tsunderestation/saves/*.srm`
 - Save states: `~/.local/share/tsunderestation/states/*.state`

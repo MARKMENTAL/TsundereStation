@@ -1,6 +1,6 @@
 [package]
 name = "tsunderestation"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "A small egui/libretro frontend for the SwanStation core"
 license = "GPL-3.0-or-later"
@@ -24,7 +24,7 @@ log = "0.4"
 minimp3 = "0.6"
 serde = { version = "1", features = ["derive"] }
 sdl2 = "0.38"
-toml = "1"
+toml = { version = "1", features = ["preserve_order"] }
 
 [profile.release]
 opt-level = 3

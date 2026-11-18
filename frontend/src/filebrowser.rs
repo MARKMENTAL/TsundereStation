@@ -1,4 +1,5 @@
 use crate::sdl_input::NavAction;
+use crate::theme::{self, UiTheme};
 use crate::tv_ui::{controller_hint, tv_row};
 use eframe::egui;
 use std::fs;
@@ -161,7 +162,7 @@ impl FileBrowser {
             .and_then(|(path, _name, is_dir)| if *is_dir { None } else { Some(path.clone()) });
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) -> BrowseResult {
+    pub fn show(&mut self, ctx: &egui::Context, ui_theme: &UiTheme) -> BrowseResult {
         if !self.open {
             return BrowseResult::Cancelled;
         }
@@ -172,91 +173,108 @@ impl FileBrowser {
         let mut result = BrowseResult::None;
         let mut open = self.open;
         let mut navigate_to = None;
-
-        egui::Window::new(match self.kind {
+        let mut header_close = false;
+        let title = match self.kind {
             BrowseKind::Game => "Choose a game",
             BrowseKind::Bios => "Choose a BIOS image",
-        })
-        .open(&mut open)
-        .resizable(true)
-        .default_width(1100.0)
-        .default_height(700.0)
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                if ui.button("Up").clicked() {
-                    if let Some(parent) = self.cwd.parent() {
-                        navigate_to = Some(parent.to_path_buf());
-                    }
-                }
-                if ui.button("Home").clicked() {
-                    navigate_to = Some(crate::config::home_dir());
-                }
-                if ui.button("Refresh").clicked() {
-                    self.needs_refresh = true;
-                }
-            });
-            ui.add(
-                egui::Label::new(egui::RichText::new(self.cwd.display().to_string()).monospace())
-                    .wrap_mode(egui::TextWrapMode::Truncate),
-            );
-            ui.separator();
+        };
+        let window_frame = theme::window_frame(&ctx.global_style(), ui_theme);
 
-            if let Some(error) = &self.error {
-                ui.colored_label(egui::Color32::LIGHT_RED, error);
-            }
-
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .max_height((ui.available_height() - 140.0).max(120.0))
-                .show(ui, |ui| {
-                    for (index, (path, name, is_dir)) in self.entries.iter().enumerate() {
-                        let label = if name == ".." {
-                            ".. (parent directory)".to_string()
-                        } else if *is_dir {
-                            format!("[dir] {name}")
-                        } else {
-                            let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-                            format!("[file] {name}  —  {}", format_size(size))
-                        };
-                        let focused = self.focus == index;
-                        let response = tv_row(ui, focused, &label);
-                        if response.clicked() {
-                            self.focus = index;
-                            if *is_dir {
-                                navigate_to = Some(path.clone());
-                            } else {
-                                self.selected = Some(path.clone());
+        egui::Window::new(title)
+            .open(&mut open)
+            .title_bar(false)
+            .frame(window_frame)
+            .resizable(true)
+            .default_width(1100.0)
+            .default_height(700.0)
+            .show(ctx, |ui| {
+                if theme::window_header(ui, title, ui_theme) {
+                    header_close = true;
+                }
+                theme::window_body(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button("Up").clicked() {
+                            if let Some(parent) = self.cwd.parent() {
+                                navigate_to = Some(parent.to_path_buf());
                             }
                         }
-                        if focused {
-                            response.scroll_to_me(Some(egui::Align::Center));
+                        if ui.button("Home").clicked() {
+                            navigate_to = Some(crate::config::home_dir());
                         }
-                    }
-                });
+                        if ui.button("Refresh").clicked() {
+                            self.needs_refresh = true;
+                        }
+                    });
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(self.cwd.display().to_string()).monospace(),
+                        )
+                        .wrap_mode(egui::TextWrapMode::Truncate),
+                    );
+                    ui.separator();
 
-            ui.separator();
-            ui.horizontal(|ui| {
-                let can_choose = self.selected.is_some();
-                if ui
-                    .add_enabled(can_choose, egui::Button::new("Choose"))
-                    .clicked()
-                {
-                    if let Some(path) = self.selected.clone() {
-                        result = BrowseResult::Chosen(path);
+                    if let Some(error) = &self.error {
+                        ui.colored_label(ui_theme.error, error);
                     }
-                }
-                if ui.button("Cancel").clicked() {
-                    result = BrowseResult::Cancelled;
-                }
-                if let Some(path) = &self.selected {
-                    ui.weak(path.display().to_string());
-                }
+
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .max_height((ui.available_height() - 140.0).max(120.0))
+                        .show(ui, |ui| {
+                            for (index, (path, name, is_dir)) in self.entries.iter().enumerate() {
+                                let label = if name == ".." {
+                                    ".. (parent directory)".to_string()
+                                } else if *is_dir {
+                                    format!("[dir] {name}")
+                                } else {
+                                    let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+                                    format!("[file] {name}  —  {}", format_size(size))
+                                };
+                                let focused = self.focus == index;
+                                let response =
+                                    tv_row(ui, focused, &label, ui_theme, ("browser", index));
+                                if response.clicked() {
+                                    self.focus = index;
+                                    if *is_dir {
+                                        navigate_to = Some(path.clone());
+                                    } else {
+                                        self.selected = Some(path.clone());
+                                    }
+                                }
+                                if focused {
+                                    response.scroll_to_me(Some(egui::Align::Center));
+                                }
+                            }
+                        });
+
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        let can_choose = self.selected.is_some();
+                        if ui
+                            .add_enabled(can_choose, egui::Button::new("Choose"))
+                            .clicked()
+                        {
+                            if let Some(path) = self.selected.clone() {
+                                result = BrowseResult::Chosen(path);
+                            }
+                        }
+                        if ui.button("Cancel").clicked() {
+                            result = BrowseResult::Cancelled;
+                        }
+                        if let Some(path) = &self.selected {
+                            ui.weak(path.display().to_string());
+                        }
+                    });
+                    controller_hint(
+                        ui,
+                        "Cross: open/choose  ·  Circle: close  ·  .. row: parent",
+                        ui_theme,
+                    );
+                });
             });
-            controller_hint(
-                ui,
-                "Cross: open/choose  ·  Circle: close  ·  .. row: parent",
-            );
-        });
+        if header_close {
+            open = false;
+        }
 
         if let Some(dir) = navigate_to {
             self.cwd = dir;

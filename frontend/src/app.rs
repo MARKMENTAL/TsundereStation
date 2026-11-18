@@ -5,6 +5,7 @@ use crate::libretro::host::{HostState, MessageKind};
 use crate::libretro::loader::{state_path, CoreInfo};
 use crate::sdl_input::{NavAction, SdlState};
 use crate::splash::{self, SplashAudio};
+use crate::theme::{self, Theme, UiTheme};
 use crate::tv_ui::{controller_hint, tv_row};
 use eframe::egui;
 use std::path::{Path, PathBuf};
@@ -80,6 +81,9 @@ pub struct App {
     texture_size: [usize; 2],
 
     logo_texture: Option<egui::TextureHandle>,
+    themes: Vec<Theme>,
+    ui_theme: UiTheme,
+    theme_error: Option<String>,
     splash_audio: Arc<Mutex<SplashAudio>>,
     splash_start: Instant,
     splash_duration: Duration,
@@ -106,9 +110,18 @@ impl App {
         auto_boot_bios: bool,
         splash_override: Option<bool>,
     ) -> anyhow::Result<Self> {
-        cc.egui_ctx.set_visuals(egui::Visuals::dark());
-        crate::tv_ui::apply_theme(&cc.egui_ctx);
         host.video.set_context(cc.egui_ctx.clone());
+
+        let (themes, theme_error) = theme::load_catalog();
+        let selected_index = themes
+            .iter()
+            .position(|theme| theme.name == config.theme)
+            .unwrap_or(0);
+        if themes[selected_index].name != config.theme {
+            config.theme = themes[selected_index].name.clone();
+            let _ = config.save();
+        }
+        let ui_theme = themes[selected_index].apply(&cc.egui_ctx);
 
         let logo_texture = match splash::logo_image() {
             Ok(image) => Some(cc.egui_ctx.load_texture(
@@ -185,6 +198,9 @@ impl App {
             texture_seq: 0,
             texture_size: [0, 0],
             logo_texture,
+            themes,
+            ui_theme,
+            theme_error,
             splash_audio,
             splash_start: Instant::now(),
             splash_duration: Duration::from_secs_f32(splash_seconds.clamp(1.0, 30.0)),
@@ -339,7 +355,7 @@ impl App {
         egui::CentralPanel::no_frame().show(ui, |ui| {
             let rect = ui.max_rect();
             ui.painter()
-                .rect_filled(rect, egui::CornerRadius::ZERO, egui::Color32::BLACK);
+                .rect_filled(rect, egui::CornerRadius::ZERO, self.ui_theme.background);
 
             let elapsed = self.splash_start.elapsed().as_secs_f32();
             let total = self.splash_duration.as_secs_f32().max(0.1);
@@ -366,11 +382,11 @@ impl App {
                     egui::Align2::CENTER_CENTER,
                     "TsundereStation",
                     egui::FontId::proportional(42.0),
-                    egui::Color32::from_white_alpha((alpha * 255.0) as u8),
+                    self.ui_theme.text.gamma_multiply(alpha),
                 );
             }
 
-            let hint = egui::Color32::from_white_alpha((alpha * 170.0) as u8);
+            let hint = self.ui_theme.muted.gamma_multiply(alpha);
             ui.painter().text(
                 rect.center_bottom() - egui::vec2(0.0, 46.0),
                 egui::Align2::CENTER_BOTTOM,
@@ -384,20 +400,14 @@ impl App {
                 egui::pos2(rect.center().x - 200.0, rect.bottom() - 28.0),
                 egui::vec2(400.0, 4.0),
             );
-            ui.painter().rect_filled(
-                bar,
-                egui::CornerRadius::same(2),
-                egui::Color32::from_gray(45),
-            );
+            ui.painter()
+                .rect_filled(bar, egui::CornerRadius::same(2), self.ui_theme.surface2);
             let fill = egui::Rect::from_min_size(
                 bar.min,
                 egui::vec2(bar.width() * progress, bar.height()),
             );
-            ui.painter().rect_filled(
-                fill,
-                egui::CornerRadius::same(2),
-                egui::Color32::from_rgb(230, 30, 120),
-            );
+            ui.painter()
+                .rect_filled(fill, egui::CornerRadius::same(2), self.ui_theme.accent);
         });
     }
 
@@ -993,6 +1003,7 @@ impl App {
                         controller_hint(
                             ui,
                             "D-pad / left stick: move  ·  Cross: select  ·  Left/Right: change controller",
+                            &self.ui_theme,
                         );
                     });
             }
@@ -1029,9 +1040,10 @@ impl App {
                                 ui.vertical(|ui| {
                                     ui.heading("TsundereStation");
                                     ui.label(
-                                        egui::RichText::new(
-                                            "A SwanStation frontend in Rust",
-                                        )
+                                        egui::RichText::new(format!(
+                                            "A SwanStation frontend in Rust · v{}",
+                                            env!("CARGO_PKG_VERSION")
+                                        ))
                                         .weak()
                                         .size(18.0),
                                     );
@@ -1053,7 +1065,11 @@ impl App {
                             });
 
                             ui.add_space(10.0);
-                            ui.label(egui::RichText::new("Game path").strong());
+                            ui.label(
+                                egui::RichText::new("Game path")
+                                    .strong()
+                                    .color(self.ui_theme.text),
+                            );
                             ui.horizontal(|ui| {
                                 ui.add(
                                     egui::TextEdit::singleline(
@@ -1087,7 +1103,7 @@ impl App {
                                 }
                                 let focused = index == self.launcher_focus;
                                 let label = self.launcher_label(*item);
-                                let response = tv_row(ui, focused, &label);
+                                let response = tv_row(ui, focused, &label, &self.ui_theme, ("launcher", index));
                                 if response.clicked() {
                                     self.launcher_focus = index;
                                     self.activate_launcher_item(*item, &ctx);
@@ -1127,7 +1143,7 @@ impl App {
                     egui::Align2::CENTER_CENTER,
                     "Starting…",
                     egui::FontId::proportional(24.0),
-                    egui::Color32::GRAY,
+                    self.ui_theme.muted,
                 );
             }
 
@@ -1155,7 +1171,7 @@ impl App {
                     egui::Align2::LEFT_TOP,
                     info,
                     egui::FontId::monospace(17.0),
-                    egui::Color32::from_white_alpha(190),
+                    self.ui_theme.muted,
                 );
             }
         });
@@ -1234,7 +1250,8 @@ impl App {
                     .show(ui, |ui| {
                         for (index, label) in labels.iter().enumerate() {
                             let focused = self.menu_selection == index;
-                            let response = tv_row(ui, focused, label);
+                            let response =
+                                tv_row(ui, focused, label, &self.ui_theme, ("overlay", index));
                             if response.clicked() {
                                 self.menu_selection = index;
                                 clicked = Some(index);
@@ -1248,6 +1265,7 @@ impl App {
                 controller_hint(
                     ui,
                     "D-pad/stick: move  ·  Cross: select  ·  Circle/PS: close  ·  Left/Right: slot",
+                    &self.ui_theme,
                 );
             });
 
@@ -1275,37 +1293,82 @@ impl App {
         let overrides = host.options.read().unwrap().overrides.clone();
         let categories = info.categories.clone();
         let options = info.options.clone();
+        let themes = self.themes.clone();
+        let current_theme = self.config.theme.clone();
+        let active_accent = self.ui_theme.accent;
+        let theme_error = self.theme_error.clone();
+        let mut theme_change: Option<String> = None;
+        let mut reload_themes = false;
+        let mut header_close = false;
+        let window_frame = theme::window_frame(&ctx.global_style(), &self.ui_theme);
 
         egui::Window::new("Settings")
             .open(&mut open)
+            .title_bar(false)
+            .frame(window_frame)
             .resizable(true)
             .default_width(1200.0)
             .default_height(700.0)
             .show(ctx, |ui| {
+                if theme::window_header(ui, "Settings", &self.ui_theme) {
+                    header_close = true;
+                }
+                theme::window_body(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Search");
+                    let hint = if self.settings_category == "appearance" {
+                        "filter themes"
+                    } else {
+                        "filter options"
+                    };
                     ui.add(
                         egui::TextEdit::singleline(&mut self.settings_search)
                             .desired_width(320.0)
-                            .hint_text("filter options"),
+                            .hint_text(hint),
                     );
-                    if ui.button("Reset all").clicked() {
-                        reset_all = true;
+                    if self.settings_category == "appearance" {
+                        if ui.button("Reload themes").clicked() {
+                            reload_themes = true;
+                        }
+                    } else {
+                        if ui.button("Reset all").clicked() {
+                            reset_all = true;
+                        }
+                        if ui.button("Restart core").clicked() {
+                            restart_core = true;
+                        }
+                        ui.weak("Renderer: Software");
                     }
-                    if ui.button("Restart core").clicked() {
-                        restart_core = true;
-                    }
-                    ui.weak("Renderer: Software");
                 });
-                ui.weak(
-                    "Most options apply on the next frame. Use Restart core to re-read all options; \
-                     options marked \"requires restart\" need it.",
-                );
+                if self.settings_category == "appearance" {
+                    ui.weak(format!(
+                        "External themes are appended from {}",
+                        theme::external_path().display()
+                    ));
+                    if let Some(error) = &theme_error {
+                        ui.colored_label(self.ui_theme.error, error);
+                    }
+                } else {
+                    ui.weak(
+                        "Most options apply on the next frame. Use Restart core to re-read all options; \
+                         options marked \"requires restart\" need it.",
+                    );
+                }
                 ui.separator();
 
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
-                        ui.set_width(180.0);
+                        ui.set_width(230.0);
+                        if ui
+                            .selectable_label(
+                                self.settings_category == "appearance",
+                                "Appearance",
+                            )
+                            .clicked()
+                        {
+                            self.settings_category = "appearance".to_string();
+                        }
+                        ui.separator();
                         if ui
                             .selectable_label(self.settings_category.is_empty(), "All options")
                             .clicked()
@@ -1341,7 +1404,46 @@ impl App {
                     ui.separator();
                     ui.vertical(|ui| {
                         ui.set_min_width(850.0);
-                        egui::ScrollArea::vertical()
+                        if self.settings_category == "appearance" {
+                            ui.heading("Theme");
+                            ui.weak(
+                                "Select a theme for the launcher, menus, settings and splash.",
+                            );
+                            ui.label(
+                                egui::RichText::new(format!("Current theme: {current_theme}"))
+                                    .color(self.ui_theme.muted),
+                            );
+                            ui.add_space(6.0);
+                            let search = self.settings_search.to_lowercase();
+                            let mut shown = 0;
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .max_height((ui.available_height() - 16.0).max(200.0))
+                                .show(ui, |ui| {
+                                    for theme in &themes {
+                                        if !search.is_empty()
+                                            && !theme.name.to_lowercase().contains(&search)
+                                        {
+                                            continue;
+                                        }
+                                        shown += 1;
+                                        let response = theme::theme_picker_row(
+                                            ui,
+                                            theme,
+                                            theme.name == current_theme,
+                                            active_accent,
+                                        );
+                                        if response.clicked() {
+                                            theme_change = Some(theme.name.clone());
+                                        }
+                                        ui.add_space(6.0);
+                                    }
+                                    if shown == 0 {
+                                        ui.weak("No matching themes.");
+                                    }
+                                });
+                        } else {
+                            egui::ScrollArea::vertical()
                             .auto_shrink([false, false])
                             .max_height((ui.available_height() - 16.0).max(200.0))
                             .show(ui, |ui| {
@@ -1393,13 +1495,15 @@ impl App {
                                                 || option.info.contains("restart");
                                             ui.vertical(|ui| {
                                                 ui.set_min_width(380.0);
-                                                ui.strong(&option.label);
+                                                ui.label(
+                                                    egui::RichText::new(&option.label)
+                                                        .strong()
+                                                        .color(self.ui_theme.text),
+                                                );
                                                 if restart {
                                                     ui.small(
                                                         egui::RichText::new("requires restart")
-                                                            .color(egui::Color32::from_rgb(
-                                                                220, 170, 60,
-                                                            )),
+                                                            .color(self.ui_theme.warning),
                                                     );
                                                 }
                                             });
@@ -1445,10 +1549,22 @@ impl App {
                                     ui.weak("No matching options.");
                                 }
                             });
+                        }
                     });
                 });
+                });
             });
+        if header_close {
+            open = false;
+        }
         self.settings_open = open;
+
+        if reload_themes {
+            self.reload_theme_catalog(ctx);
+        }
+        if let Some(name) = theme_change {
+            self.apply_theme_name(&name, ctx);
+        }
 
         let options_changed = !changes.is_empty() || !resets.is_empty() || reset_all;
         for key in resets {
@@ -1496,6 +1612,41 @@ impl App {
         }
     }
 
+    fn apply_theme_name(&mut self, name: &str, ctx: &egui::Context) {
+        let Some(theme) = self.themes.iter().find(|theme| theme.name == name).cloned() else {
+            return;
+        };
+        self.ui_theme = theme.apply(ctx);
+        self.config.theme = theme.name.clone();
+        let _ = self.config.save();
+        self.push_toast(format!("Theme: {}", theme.name), MessageKind::Info, 1.5);
+    }
+
+    fn reload_theme_catalog(&mut self, ctx: &egui::Context) {
+        let (themes, error) = theme::load_catalog();
+        self.themes = themes;
+        self.theme_error = error;
+        if self.themes.is_empty() {
+            self.themes.push(Theme::fallback());
+        }
+        let index = self
+            .themes
+            .iter()
+            .position(|theme| theme.name == self.config.theme)
+            .unwrap_or(0);
+        let name = self.themes[index].name.clone();
+        if name != self.config.theme {
+            self.config.theme = name.clone();
+            let _ = self.config.save();
+        }
+        self.apply_theme_name(&name, ctx);
+        if let Some(error) = &self.theme_error {
+            self.push_toast(error.clone(), MessageKind::Warning, 6.0);
+        } else {
+            self.push_toast("Themes reloaded".into(), MessageKind::Info, 2.0);
+        }
+    }
+
     fn controller_window(&mut self, ctx: &egui::Context) {
         if !self.controller_open {
             return;
@@ -1507,14 +1658,23 @@ impl App {
         let info = self.core_info.clone();
         let host = self.host.clone();
 
+        let ui_theme = self.ui_theme;
+        let window_frame = theme::window_frame(&ctx.global_style(), &ui_theme);
+        let mut header_close = false;
         let sdl = &mut self.sdl;
         let config = &mut self.config;
 
         egui::Window::new("Controller")
             .open(&mut open)
+            .title_bar(false)
+            .frame(window_frame)
             .resizable(false)
             .default_width(700.0)
             .show(ctx, |ui| {
+                if theme::window_header(ui, "Controller", &ui_theme) {
+                    header_close = true;
+                }
+                theme::window_body(ui, |ui| {
                 ui.heading("SDL game controller");
                 let controllers = sdl.controllers().to_vec();
                 let current = sdl
@@ -1630,8 +1790,11 @@ impl App {
                     host.input.axis(1, 1),
                 ));
                 ui.monospace(format!("last button: {}", sdl.last_button()));
+                });
             });
-
+        if header_close {
+            open = false;
+        }
         self.controller_open = open;
         if rescan {
             self.sdl.refresh_controllers(None);
@@ -1650,8 +1813,9 @@ impl App {
     fn browser_window(&mut self, ctx: &egui::Context) {
         let mut result = BrowseResult::None;
         let kind = self.file_browser.as_ref().map(|b| b.kind);
+        let ui_theme = self.ui_theme;
         if let Some(browser) = self.file_browser.as_mut() {
-            result = browser.show(ctx);
+            result = browser.show(ctx, &ui_theme);
         }
         if matches!(result, BrowseResult::None) {
             return;
@@ -1723,17 +1887,18 @@ impl App {
                 ui.set_max_width(560.0);
                 for toast in &self.toasts {
                     let color = match toast.kind {
-                        MessageKind::Info => egui::Color32::from_rgb(40, 90, 140),
-                        MessageKind::Warning => egui::Color32::from_rgb(140, 100, 30),
-                        MessageKind::Error => egui::Color32::from_rgb(150, 45, 45),
-                        MessageKind::Debug => egui::Color32::from_rgb(70, 70, 70),
+                        MessageKind::Info => self.ui_theme.info,
+                        MessageKind::Warning => self.ui_theme.warning,
+                        MessageKind::Error => self.ui_theme.error,
+                        MessageKind::Debug => self.ui_theme.muted,
                     };
                     egui::Frame::NONE
                         .fill(color)
                         .inner_margin(egui::Margin::same(8))
                         .corner_radius(egui::CornerRadius::same(5))
                         .show(ui, |ui| {
-                            ui.label(egui::RichText::new(&toast.text).color(egui::Color32::WHITE));
+                            let text_color = self.ui_theme.on_color(color);
+                            ui.label(egui::RichText::new(&toast.text).color(text_color));
                         });
                     ui.add_space(4.0);
                 }
@@ -1775,7 +1940,7 @@ impl eframe::App for App {
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        [0.02, 0.02, 0.03, 1.0]
+        self.ui_theme.background.to_normalized_gamma_f32()
     }
 }
 
