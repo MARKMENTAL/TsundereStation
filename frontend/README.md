@@ -17,6 +17,105 @@ whistles. Just the core, the games, and a tsundere attitude.
 The app includes the TsundereStation logo and a short startup splash with the
 provided motif. Both assets are embedded in the binary.
 
+## Screenshots
+
+<p align="center">
+  <img src="readme-screenshots/uiscreen1.png" alt="TsundereStation launcher" width="900">
+</p>
+<p align="center"><em>Launcher with controller-first navigation and recent games.</em></p>
+
+<table>
+  <tr>
+    <td align="center" valign="top">
+      <img src="readme-screenshots/uiscreeningame.png" alt="TsundereStation in-game pause menu" width="440">
+    </td>
+    <td align="center" valign="top">
+      <img src="readme-screenshots/uiscreensettings.png" alt="TsundereStation settings and theme picker" width="440">
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><em>In-game pause menu over gameplay.</em></td>
+    <td align="center"><em>Settings → Appearance theme picker.</em></td>
+  </tr>
+</table>
+
+### Game screenshots
+
+These are direct `F12` screenshots from TsundereStation.
+
+<table>
+  <tr>
+    <td align="center" valign="top">
+      <img src="readme-screenshots/Shin Seiki Evangelion - Koutetsu no Girlfriend (Japan)-20261118165503.jpg" alt="Evangelion dialogue scene" width="320">
+    </td>
+    <td align="center" valign="top">
+      <img src="readme-screenshots/Shin Seiki Evangelion - Koutetsu no Girlfriend (Japan)-20261118165607.jpg" alt="Evangelion classroom scene" width="320">
+    </td>
+    <td align="center" valign="top">
+      <img src="readme-screenshots/WWF SmackDown! 2 - Know Your Role (USA)-20261118162849.jpg" alt="WWF SmackDown! 2 match" width="320">
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><em>Shin Seiki Evangelion — dialogue scene.</em></td>
+    <td align="center"><em>Shin Seiki Evangelion — classroom scene.</em></td>
+    <td align="center"><em>WWF SmackDown! 2 — match action.</em></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top">
+      <img src="readme-screenshots/WWF SmackDown! 2 - Know Your Role (USA)-20261118163447.jpg" alt="WWF SmackDown! 2 four-wrestler match" width="320">
+    </td>
+    <td align="center" valign="top">
+      <img src="readme-screenshots/WWF SmackDown! 2 - Know Your Role (USA)-20261118163319.jpg" alt="Kane entrance in WWF SmackDown! 2" width="320">
+    </td>
+    <td align="center" valign="top">
+      <img src="readme-screenshots/WWF SmackDown! 2 - Know Your Role (USA)-20261118163001.jpg" alt="KO finish in WWF SmackDown! 2" width="320">
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><em>WWF SmackDown! 2 — four-wrestler match.</em></td>
+    <td align="center"><em>WWF SmackDown! 2 — Kane entrance.</em></td>
+    <td align="center"><em>WWF SmackDown! 2 — KO finish.</em></td>
+  </tr>
+</table>
+
+<details>
+<summary>More game screenshots</summary>
+
+<table>
+  <tr>
+    <td align="center" valign="top">
+      <img src="readme-screenshots/Shin Seiki Evangelion - Koutetsu no Girlfriend (Japan)-20261118165743.jpg" alt="Evangelion school corridor" width="320">
+    </td>
+    <td align="center" valign="top">
+      <img src="readme-screenshots/Shin Seiki Evangelion - Koutetsu no Girlfriend (Japan)-20261118165847.jpg" alt="Evangelion school corridor with a portrait" width="320">
+    </td>
+    <td align="center" valign="top">
+      <img src="readme-screenshots/Shin Seiki Evangelion - Koutetsu no Girlfriend (Japan)-20261118170027.jpg" alt="Evangelion location selection" width="320">
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top">
+      <img src="readme-screenshots/Shin Seiki Evangelion - Koutetsu no Girlfriend (Japan)-20261118170101.jpg" alt="Evangelion school menu" width="320">
+    </td>
+    <td align="center" valign="top">
+      <img src="readme-screenshots/Shin Seiki Evangelion - Koutetsu no Girlfriend (Japan)-20261118170146.jpg" alt="Evangelion library scene" width="320">
+    </td>
+    <td align="center" valign="top">
+      <img src="readme-screenshots/Shin Seiki Evangelion - Koutetsu no Girlfriend (Japan)-20261118170207.jpg" alt="Evangelion library scene with dialogue" width="320">
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top">
+      <img src="readme-screenshots/WWF SmackDown! 2 - Know Your Role (USA)-20261118162558.jpg" alt="WWF SmackDown! 2 arena entrance" width="320">
+    </td>
+    <td align="center" valign="top">
+      <img src="readme-screenshots/WWF SmackDown! 2 - Know Your Role (USA)-20261118162907.jpg" alt="WWF SmackDown! 2 ring action" width="320">
+    </td>
+  </tr>
+</table>
+
+</details>
+
 ## Scope
 
 - Free software under GPL-3.0-or-later.
@@ -353,9 +452,11 @@ core next to the executable, in the current directory, in
 - `src/tv_ui.rs`: large full-width TV rows and controller hints.
 - `src/config.rs`: config schema, XDG paths, legacy migration and core discovery.
 - `src/memory_card/`: vendored JAPS1ME card engine and the Memory Card Manager UI.
+- `src/screenshot.rs`: JPEG screenshot naming and encoding.
 - `src/filebrowser.rs`: small built-in file picker.
 - `assets/`: embedded themes, logo, splash motif and desktop icon.
-- `packaging/`: desktop entry and AppImage build script.
+- `readme-screenshots/`: README-only UI and game screenshots; not embedded.
+- `packaging/`: desktop entry, AppImage build script and release templates.
 
 ## Development notes
 

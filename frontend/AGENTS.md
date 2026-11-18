@@ -138,6 +138,7 @@ is missing, it emits a placeholder. Do not hand-edit generated files in
 | `assets/tsunderestation-splash.mp3` | Embedded splash motif. |
 | `packaging/release-template.md` | Release-draft template. |
 | `packaging/release-notes/` | Per-version release highlights. |
+| `readme-screenshots/` | README-only UI/game screenshots; not embedded or packaged. |
 
 ## Architecture
 
