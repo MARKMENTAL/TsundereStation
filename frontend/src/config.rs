@@ -268,6 +268,10 @@ pub fn data_dir() -> PathBuf {
     home_dir().join(".local").join("share")
 }
 
+pub fn screenshots_dir() -> PathBuf {
+    data_dir().join(APP_DIR).join("screenshots")
+}
+
 pub fn config_dir() -> PathBuf {
     if let Ok(x) = env::var("XDG_CONFIG_HOME") {
         if !x.is_empty() {

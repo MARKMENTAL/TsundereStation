@@ -113,9 +113,10 @@ yet. The build script runs the packaged binary's `--selftest` unless disabled.
 | `src/filebrowser.rs` | Built-in file browser for games and BIOS images. |
 | `src/config.rs` | Config schema, XDG paths, legacy migration, core search paths. |
 | `src/memory_card/` | Vendored JAPS1ME card engine and Memory Card Manager UI. |
-| `src/emu.rs` | Emulation worker thread, commands, save states and memory cards. |
+| `src/emu.rs` | Emulation worker thread, commands, save states, memory cards and disc swaps. |
 | `src/sdl_input.rs` | SDL controller discovery, mapping, rumble, navigation and shared audio callback. |
 | `src/splash.rs` | Embedded logo/motif decoding and window icon. |
+| `src/screenshot.rs` | JPEG screenshot naming and encoding. |
 | `src/libretro/` | Hand-written libretro ABI, core loader, host callbacks, video/audio/input handoff. |
 | `assets/themes.toml` | Embedded theme catalog. |
 | `assets/tsunderestation.png` | Desktop icon and README logo. |
@@ -153,6 +154,11 @@ from SDL to libretro input state.
 - The Memory Card Manager opens from the launcher and uses the same custom
   accent header as Settings. Keep one outer scroll area for its details pane;
   nesting save-list and detail scroll areas makes lower controls unreliable.
+- `F12` takes a JPEG screenshot of the game frame. The pause menu also exposes
+  **Take screenshot (F12)**.
+- Multi-disc `.m3u` content adds **Swap disc…** to the pause menu. The disc
+  picker must stay controller-navigable and must call disc-control functions on
+  the emulation worker thread, never directly from the UI thread.
 - JAPS1ME is the default theme. Do not change the default without an explicit
   request.
 - Keep service integrations and extra platforms out of scope (see Non-goals).
@@ -282,6 +288,7 @@ Config follows the XDG base directory spec:
 - BIOS: `~/.local/share/tsunderestation/bios/`
 - Memory cards: `~/.local/share/tsunderestation/saves/*.srm`
 - Save states: `~/.local/share/tsunderestation/states/*.state`
+- Screenshots: `~/.local/share/tsunderestation/screenshots/*.jpg`
 
 `Config` uses serde defaults. New fields must be backward compatible with
 existing config files. `memory_card_source_dir` remembers the last external
@@ -354,6 +361,30 @@ branch adds a `TsundereStation` install target for the JAPS1ME CLI (`.srm`,
 detected from a `tsunderestation` path component); that is separate from the
 TsundereStation UI, which has no install-back action.
 
+## Screenshots and disc control
+
+Screenshots use the latest RGB frame from `VideoMailbox`, encode it as JPEG at
+quality 92, and write to `config::screenshots_dir()`:
+
+```text
+~/.local/share/tsunderestation/screenshots/gamename-YYYYMMDDHHMMSS.jpg
+```
+
+Filenames use local time. If two screenshots have the same timestamp, append
+`-1`, `-2`, and so on. The game title/stem is sanitized for filesystem use.
+
+Disc swapping uses the libretro disk-control interface:
+
+- `HostState` stores the callbacks registered by the core during `retro_init`.
+- `RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION` returns 1.
+- Both the ext and legacy interface calls are accepted.
+- The emulation worker performs eject → select image → close. Never call these
+  callbacks from the egui/UI thread.
+- `WorkerEvent::DiscInfo` carries labels and the current index back to the UI.
+- Swap is available only when more than one image exists, normally an `.m3u`
+  playlist. Do not add a swap row for single-disc content.
+- Clear stored callbacks when the core shuts down.
+
 ## Testing and verification
 
 Minimum for code changes:
@@ -372,6 +403,12 @@ Palette/contrast changes must keep these tests passing:
 - `filled_backgrounds_use_higher_contrast_text`
 - `japs1me_pink_uses_black_text`
 - `pathological_external_theme_is_repaired`
+
+Screenshot and disc-control changes must keep these tests passing:
+
+- screenshot filename sanitization and collision suffix
+- JPEG output validation
+- disc-control mock eject/select/close ordering and failure recovery
 
 Memory-card changes must keep the ported card tests passing, including:
 
@@ -403,6 +440,8 @@ Visual checklist for UI changes:
 - Toast text on info/warning/error backgrounds.
 - Memory Card Manager: launcher entry, local card list, save list and icon preview.
 - `.gme` warning and conversion, DuckStation card copy, duplicate import confirmation, delete confirmation and icon export.
+- F12 and pause-menu screenshot actions write the expected JPG path/name.
+- A multi-disc `.m3u` shows the disc picker; a single-disc image shows no swap row.
 
 For AppImage changes, build the AppImage and run its selftest:
 
@@ -441,8 +480,8 @@ affiliated with or endorsed by any anime or game rights holders.
 - Software renderer only; hardware GL/Vulkan rendering, upscaling and PGXP are
   not wired up.
 - One controller mapped to port 1; multitap is not exposed.
-- Single-disc images and the first disc of an `.m3u` work; disc swapping is not
-  exposed.
+- Multi-disc swapping requires an `.m3u` playlist; single-file images expose one
+  image only.
 - Rewind, runahead and cheats are not exposed.
 - Audio uses SDL's default device at 44.1 kHz and runs silently if no device is
   available.

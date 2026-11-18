@@ -42,6 +42,40 @@ pub enum MessageKind {
     Debug,
 }
 
+#[derive(Clone, Copy)]
+pub struct DiskControl {
+    pub set_eject_state: Option<ffi::retro_set_eject_state_t>,
+    pub get_image_index: Option<ffi::retro_get_image_index_t>,
+    pub set_image_index: Option<ffi::retro_set_image_index_t>,
+    pub get_num_images: Option<ffi::retro_get_num_images_t>,
+    pub get_image_path: Option<ffi::retro_get_image_path_t>,
+    pub get_image_label: Option<ffi::retro_get_image_label_t>,
+}
+
+impl DiskControl {
+    fn from_ext(callback: &ffi::retro_disk_control_ext_callback) -> Self {
+        Self {
+            set_eject_state: callback.set_eject_state,
+            get_image_index: callback.get_image_index,
+            set_image_index: callback.set_image_index,
+            get_num_images: callback.get_num_images,
+            get_image_path: callback.get_image_path,
+            get_image_label: callback.get_image_label,
+        }
+    }
+
+    fn from_legacy(callback: &ffi::retro_disk_control_callback) -> Self {
+        Self {
+            set_eject_state: callback.set_eject_state,
+            get_image_index: callback.get_image_index,
+            set_image_index: callback.set_image_index,
+            get_num_images: callback.get_num_images,
+            get_image_path: None,
+            get_image_label: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct HostMessage {
     pub text: String,
@@ -122,6 +156,8 @@ pub struct HostState {
     pub rumble_strong: AtomicU16,
     pub rumble_weak: AtomicU16,
     pub rumble_generation: AtomicU64,
+
+    disk_control: Mutex<Option<DiskControl>>,
 }
 
 impl HostState {
@@ -149,6 +185,7 @@ impl HostState {
             rumble_strong: AtomicU16::new(0),
             rumble_weak: AtomicU16::new(0),
             rumble_generation: AtomicU64::new(0),
+            disk_control: Mutex::new(None),
         }
     }
 
@@ -166,6 +203,22 @@ impl HostState {
 
     pub fn controller_ports(&self) -> Vec<ControllerPortInfo> {
         self.controller_ports.lock().unwrap().clone()
+    }
+
+    pub fn set_disk_control_ext(&self, callback: &ffi::retro_disk_control_ext_callback) {
+        *self.disk_control.lock().unwrap() = Some(DiskControl::from_ext(callback));
+    }
+
+    pub fn set_disk_control_legacy(&self, callback: &ffi::retro_disk_control_callback) {
+        *self.disk_control.lock().unwrap() = Some(DiskControl::from_legacy(callback));
+    }
+
+    pub fn clear_disk_control(&self) {
+        *self.disk_control.lock().unwrap() = None;
+    }
+
+    pub fn disk_control(&self) -> Option<DiskControl> {
+        *self.disk_control.lock().unwrap()
     }
 
     pub fn intern(&self, value: &str) -> *const c_char {
@@ -445,9 +498,31 @@ impl HostState {
             }
             ffi::RETRO_ENVIRONMENT_SET_HW_RENDER => false,
             ffi::RETRO_ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER => false,
-            ffi::RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE => false,
-            ffi::RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE => false,
-            ffi::RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION => false,
+            ffi::RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE => {
+                if data.is_null() {
+                    self.clear_disk_control();
+                    return true;
+                }
+                let callback = &*(data as *const ffi::retro_disk_control_callback);
+                self.set_disk_control_legacy(callback);
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE => {
+                if data.is_null() {
+                    self.clear_disk_control();
+                    return true;
+                }
+                let callback = &*(data as *const ffi::retro_disk_control_ext_callback);
+                self.set_disk_control_ext(callback);
+                true
+            }
+            ffi::RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION => {
+                if data.is_null() {
+                    return false;
+                }
+                *(data as *mut c_uint) = 1;
+                true
+            }
             ffi::RETRO_ENVIRONMENT_GET_VFS_INTERFACE => false,
             ffi::RETRO_ENVIRONMENT_GET_LOG_INTERFACE => false,
             ffi::RETRO_ENVIRONMENT_GET_INPUT_MAX_USERS => {

@@ -90,6 +90,11 @@ config file controls the duration.
 The FPS/status overlay is hidden by default. Toggle it in-game with `F3`, from
 the pause menu, or with the “Show FPS/status overlay” checkbox in the launcher.
 
+Press `F12` or use **Take screenshot (F12)** in the pause menu to save a JPEG
+under `~/.local/share/tsunderestation/screenshots`. Files are named
+`gamename-YYYYMMDDHHMMSS.jpg` using local time, with `-1`, `-2`, … added if two
+screenshots land in the same second.
+
 ## AppImage (AMD64)
 
 A local AppImage build script is included:
@@ -216,6 +221,7 @@ Following the XDG base directory spec:
 - BIOS images: `~/.local/share/tsunderestation/bios/`
 - Memory cards: `~/.local/share/tsunderestation/saves/*.srm`
 - Save states: `~/.local/share/tsunderestation/states/*.state`
+- Screenshots: `~/.local/share/tsunderestation/screenshots/*.jpg`
 
 On first run, an existing `swanstation-ui` config and data directory are migrated
 to the new `tsunderestation` paths automatically. The data directory is moved when
@@ -247,6 +253,7 @@ Keyboard:
 - `F5`: quick save (slot 0)
 - `F8`: quick load (slot 0)
 - `F3`: show/hide the FPS/status overlay
+- `F12`: save a JPG screenshot
 - `F11`: toggle fullscreen
 - Hold `Tab`: fast-forward (audio muted, video shown)
 - In the menu: arrow keys move, `Enter` selects, `Esc` closes
@@ -259,6 +266,9 @@ SDL game controller:
 - Left/Right changes the save-state slot
 - The button used to resume from the menu is discarded until it is released
   (up to one second), so it does not reach the game
+- Multi-disc `.m3u` games get a **Swap disc…** row in the pause menu. Select a
+  disc, close the menu and resume without restarting the core. Single-disc
+  images expose only one disc and show no swap row.
 - The standard SDL gamepad mapping is used: Cross → PS1 Cross, Circle → Circle,
   Square → Square, Triangle → Triangle, shoulders → L1/R1, triggers → L2/R2,
   stick clicks → L3/R3.
@@ -295,8 +305,8 @@ core next to the executable, in the current directory, in
   upscaling and PGXP are not wired up yet.
 - One controller is mapped to port 1; multitap and multiple controllers are not
   exposed yet.
-- Multi-disc swapping is not exposed yet (single-disc images, and the first disc
-  of an `.m3u`, work).
+- Multi-disc swapping requires an `.m3u` playlist; single-file images expose one
+  image only.
 - Rewind, runahead and cheats are not exposed yet.
 - Core options mostly apply on the next frame. When no game is running, changing
   an option automatically reinitializes the core so boot-time options apply to

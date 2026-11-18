@@ -4,6 +4,7 @@ mod emu;
 mod filebrowser;
 mod libretro;
 mod memory_card;
+mod screenshot;
 mod sdl_input;
 mod splash;
 mod theme;

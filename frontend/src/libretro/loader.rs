@@ -111,6 +111,7 @@ impl CoreHost {
             let mut sys_info = std::mem::zeroed::<ffi::retro_system_info>();
             (api.retro_get_system_info)(&mut sys_info);
 
+            host.clear_disk_control();
             (api.retro_set_environment)(environment_callback);
             // The core has now registered its options; apply user overrides
             // before retro_init(), which reads them in LoadSettings().
@@ -349,6 +350,7 @@ impl CoreHost {
     pub fn shutdown(&mut self) {
         let _ = self.unload_game();
         unsafe { (self.api.retro_deinit)() };
+        self.host.clear_disk_control();
     }
 }
 

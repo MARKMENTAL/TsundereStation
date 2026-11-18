@@ -1,7 +1,8 @@
 use crate::libretro::host::{HostState, MessageKind};
 use crate::libretro::loader::{state_path, CoreHost, CoreInfo};
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use std::collections::BTreeMap;
+use std::os::raw::c_char;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -23,6 +24,7 @@ pub enum Command {
     SaveState(u32),
     LoadState(u32),
     SetPortDevice(u32, u32),
+    SwapDisc(usize),
     RestartCore,
     Quit,
 }
@@ -34,6 +36,7 @@ pub enum WorkerEvent {
     Unloaded,
     StateSaved(u32),
     StateLoaded(u32),
+    DiscInfo { labels: Vec<String>, current: usize },
     Error(String),
     Stopped,
 }
@@ -99,6 +102,98 @@ impl Drop for WorkerHandle {
     }
 }
 
+fn buffer_string(buffer: &[u8]) -> Option<String> {
+    let end = buffer
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(buffer.len());
+    let value = String::from_utf8_lossy(&buffer[..end]).trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+fn query_disc_info(host: &HostState) -> Option<(Vec<String>, usize)> {
+    let control = host.disk_control()?;
+    let get_num_images = control.get_num_images?;
+    let get_image_index = control.get_image_index?;
+    let count = get_num_images() as usize;
+    if count == 0 {
+        return Some((Vec::new(), 0));
+    }
+
+    let current = get_image_index() as usize;
+    let mut labels = Vec::with_capacity(count);
+    for index in 0..count {
+        let mut buffer = vec![0u8; 4096];
+        let mut ok = false;
+        if let Some(get_label) = control.get_image_label {
+            ok = get_label(
+                index as u32,
+                buffer.as_mut_ptr() as *mut c_char,
+                buffer.len(),
+            );
+        }
+        if !ok {
+            if let Some(get_path) = control.get_image_path {
+                ok = get_path(
+                    index as u32,
+                    buffer.as_mut_ptr() as *mut c_char,
+                    buffer.len(),
+                );
+            }
+        }
+        labels.push(if ok {
+            buffer_string(&buffer).unwrap_or_else(|| format!("Disc {}", index + 1))
+        } else {
+            format!("Disc {}", index + 1)
+        });
+    }
+
+    Some((labels, current.min(count - 1)))
+}
+
+fn send_disc_info(host: &HostState, events: &Sender<WorkerEvent>) {
+    let (labels, current) = query_disc_info(host).unwrap_or_default();
+    let _ = events.send(WorkerEvent::DiscInfo { labels, current });
+}
+
+fn send_empty_disc_info(events: &Sender<WorkerEvent>) {
+    let _ = events.send(WorkerEvent::DiscInfo {
+        labels: Vec::new(),
+        current: 0,
+    });
+}
+
+fn swap_disc(host: &HostState, index: usize) -> Result<()> {
+    let control = host
+        .disk_control()
+        .context("core has no disk control interface")?;
+    let get_num_images = control
+        .get_num_images
+        .context("core has no image count callback")?;
+    let set_eject_state = control
+        .set_eject_state
+        .context("core cannot eject its disc tray")?;
+    let set_image_index = control
+        .set_image_index
+        .context("core cannot select a disc image")?;
+
+    let count = get_num_images() as usize;
+    if index >= count {
+        bail!("disc index {} is out of range (0..{})", index + 1, count);
+    }
+    if !set_eject_state(true) {
+        bail!("core refused to open the disc tray");
+    }
+    if !set_image_index(index as u32) {
+        let _ = set_eject_state(false);
+        bail!("core refused to insert disc {}", index + 1);
+    }
+    if !set_eject_state(false) {
+        bail!("core refused to close the disc tray");
+    }
+    Ok(())
+}
+
 fn run_worker(
     core_path: PathBuf,
     host: Arc<HostState>,
@@ -137,10 +232,12 @@ fn run_worker(
                                 Duration::from_secs(2),
                             );
                             let _ = events.send(WorkerEvent::Booted { title, path });
+                            send_disc_info(&host, events);
                             next_frame = Instant::now();
                         }
                         Err(e) => {
                             let msg = format!("Could not load game: {e:#}");
+                            send_empty_disc_info(events);
                             let _ = events.send(WorkerEvent::Error(msg));
                         }
                     }
@@ -157,10 +254,12 @@ fn run_worker(
                                 title: "BIOS".to_string(),
                                 path: String::new(),
                             });
+                            send_empty_disc_info(events);
                             next_frame = Instant::now();
                         }
                         Err(e) => {
                             let msg = format!("Could not boot BIOS: {e:#}");
+                            send_empty_disc_info(events);
                             let _ = events.send(WorkerEvent::Error(msg));
                         }
                     }
@@ -170,6 +269,7 @@ fn run_worker(
                         log::warn!("unload failed: {e:#}");
                     }
                     paused = false;
+                    send_empty_disc_info(events);
                     let _ = events.send(WorkerEvent::Unloaded);
                 }
                 Command::Pause(value) => paused = value,
@@ -216,6 +316,21 @@ fn run_worker(
                         current_port_device = Some(device);
                     }
                 }
+                Command::SwapDisc(index) => match swap_disc(&host, index) {
+                    Ok(()) => {
+                        send_disc_info(&host, events);
+                        host.notify(
+                            format!("Inserted disc {}", index + 1),
+                            MessageKind::Info,
+                            Duration::from_secs(2),
+                        );
+                        next_frame = Instant::now();
+                    }
+                    Err(e) => {
+                        let msg = format!("Disc swap failed: {e:#}");
+                        let _ = events.send(WorkerEvent::Error(msg));
+                    }
+                },
                 Command::RestartCore => {
                     let previous_game = core.game().map(|p| p.to_path_buf());
                     core.shutdown();
@@ -241,12 +356,16 @@ fn run_worker(
                                     title,
                                     path: game.to_string_lossy().to_string(),
                                 });
+                                send_disc_info(&host, events);
                             }
                             Err(e) => {
                                 let msg = format!("Core restarted, but game reload failed: {e:#}");
+                                send_empty_disc_info(events);
                                 let _ = events.send(WorkerEvent::Error(msg));
                             }
                         }
+                    } else {
+                        send_empty_disc_info(events);
                     }
                     next_frame = Instant::now();
                 }
@@ -302,4 +421,110 @@ fn run_worker(
     core.save_memory_card();
     core.shutdown();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::libretro::ffi;
+    use std::os::raw::c_char;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
+    use std::sync::Mutex;
+
+    static EJECTED: AtomicBool = AtomicBool::new(false);
+    static IMAGE_INDEX: AtomicUsize = AtomicUsize::new(0);
+    static FAIL_SELECT: AtomicBool = AtomicBool::new(false);
+    static CALLS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    extern "C" fn mock_num_images() -> u32 {
+        3
+    }
+
+    extern "C" fn mock_get_image_index() -> u32 {
+        IMAGE_INDEX.load(Ordering::SeqCst) as u32
+    }
+
+    extern "C" fn mock_get_eject_state() -> bool {
+        EJECTED.load(Ordering::SeqCst)
+    }
+
+    extern "C" fn mock_set_eject_state(ejected: bool) -> bool {
+        EJECTED.store(ejected, Ordering::SeqCst);
+        CALLS
+            .lock()
+            .unwrap()
+            .push(if ejected { "eject" } else { "close" }.to_string());
+        true
+    }
+
+    extern "C" fn mock_set_image_index(index: u32) -> bool {
+        if !EJECTED.load(Ordering::SeqCst) || FAIL_SELECT.load(Ordering::SeqCst) {
+            return false;
+        }
+        IMAGE_INDEX.store(index as usize, Ordering::SeqCst);
+        CALLS.lock().unwrap().push(format!("select {}", index + 1));
+        true
+    }
+
+    extern "C" fn mock_get_image_label(index: u32, buffer: *mut c_char, len: usize) -> bool {
+        let value = format!("Disc {}", index + 1);
+        let bytes = value.as_bytes();
+        if buffer.is_null() || len <= bytes.len() {
+            return false;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer as *mut u8, bytes.len());
+            *buffer.add(bytes.len()) = 0;
+        }
+        true
+    }
+
+    fn mock_control() -> ffi::retro_disk_control_ext_callback {
+        ffi::retro_disk_control_ext_callback {
+            set_eject_state: Some(mock_set_eject_state),
+            get_eject_state: Some(mock_get_eject_state),
+            get_image_index: Some(mock_get_image_index),
+            set_image_index: Some(mock_set_image_index),
+            get_num_images: Some(mock_num_images),
+            replace_image_index: None,
+            add_image_index: None,
+            set_initial_image: None,
+            get_image_path: None,
+            get_image_label: Some(mock_get_image_label),
+        }
+    }
+
+    #[test]
+    fn disc_swap_uses_eject_select_close_order() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let host = HostState::new(dir.path(), dir.path());
+        let control = mock_control();
+        host.set_disk_control_ext(&control);
+        EJECTED.store(false, Ordering::SeqCst);
+        IMAGE_INDEX.store(0, Ordering::SeqCst);
+        FAIL_SELECT.store(false, Ordering::SeqCst);
+        CALLS.lock().unwrap().clear();
+
+        swap_disc(&host, 2).expect("swaps");
+        assert_eq!(IMAGE_INDEX.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            *CALLS.lock().unwrap(),
+            vec![
+                "eject".to_string(),
+                "select 3".to_string(),
+                "close".to_string()
+            ]
+        );
+        let (labels, current) = query_disc_info(&host).expect("disc info");
+        assert_eq!(labels, vec!["Disc 1", "Disc 2", "Disc 3"]);
+        assert_eq!(current, 2);
+
+        CALLS.lock().unwrap().clear();
+        FAIL_SELECT.store(true, Ordering::SeqCst);
+        assert!(swap_disc(&host, 1).is_err());
+        assert_eq!(
+            *CALLS.lock().unwrap(),
+            vec!["eject".to_string(), "close".to_string()]
+        );
+    }
 }

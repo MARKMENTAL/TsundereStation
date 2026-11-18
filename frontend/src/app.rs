@@ -4,6 +4,7 @@ use crate::filebrowser::{BrowseKind, BrowseResult, FileBrowser};
 use crate::libretro::host::{HostState, MessageKind};
 use crate::libretro::loader::{state_path, CoreInfo};
 use crate::memory_card::MemoryCardManager;
+use crate::screenshot;
 use crate::sdl_input::{NavAction, SdlState};
 use crate::splash::{self, SplashAudio};
 use crate::theme::{self, Theme, UiTheme};
@@ -27,7 +28,21 @@ enum NavContext {
     Launcher,
 }
 
-const OVERLAY_ACTIONS: usize = 10;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OverlayAction {
+    Resume,
+    Reset,
+    SaveState,
+    LoadState,
+    TakeScreenshot,
+    SwapDisc,
+    Settings,
+    Controller,
+    ToggleFullscreen,
+    ToggleFps,
+    QuitToLauncher,
+    Quit,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LauncherItem {
@@ -72,6 +87,10 @@ pub struct App {
     paused_by_overlay: bool,
     overlay_open: bool,
     menu_selection: usize,
+    disc_labels: Vec<String>,
+    disc_index: usize,
+    swap_disc_open: bool,
+    swap_disc_focus: usize,
     settings_open: bool,
     settings_category: String,
     settings_search: String,
@@ -196,6 +215,10 @@ impl App {
             paused_by_overlay: false,
             overlay_open: false,
             menu_selection: 0,
+            disc_labels: Vec::new(),
+            disc_index: 0,
+            swap_disc_open: false,
+            swap_disc_focus: 0,
             settings_open: false,
             settings_category: String::new(),
             settings_search: String::new(),
@@ -254,6 +277,9 @@ impl App {
                     self.last_error = None;
                     self.screen = Screen::Game;
                     self.overlay_open = false;
+                    self.disc_labels.clear();
+                    self.disc_index = 0;
+                    self.swap_disc_open = false;
                     self.paused = false;
                     self.sdl.clear_input_lockout();
                     self.host.input.set(0, [0; 4]);
@@ -276,6 +302,9 @@ impl App {
                     self.settings_open = false;
                     self.controller_open = false;
                     self.memory_card.open = false;
+                    self.disc_labels.clear();
+                    self.disc_index = 0;
+                    self.swap_disc_open = false;
                     self.sdl.clear_input_lockout();
                     self.host.input.set(0, [0; 4]);
                     self.host
@@ -290,6 +319,20 @@ impl App {
                 }
                 WorkerEvent::StateLoaded(slot) => {
                     self.push_toast(format!("Loaded state slot {slot}"), MessageKind::Info, 2.0);
+                }
+                WorkerEvent::DiscInfo { labels, current } => {
+                    self.disc_index = if labels.is_empty() {
+                        0
+                    } else {
+                        current.min(labels.len() - 1)
+                    };
+                    self.disc_labels = labels;
+                    if self.disc_labels.len() <= 1 {
+                        self.swap_disc_open = false;
+                    }
+                    self.swap_disc_focus = self
+                        .swap_disc_focus
+                        .min(self.disc_labels.len().saturating_sub(1));
                 }
                 WorkerEvent::Error(message) => {
                     self.loading_game = false;
@@ -572,13 +615,91 @@ impl App {
         }
     }
 
+    fn overlay_actions(&self) -> Vec<(OverlayAction, String)> {
+        let mut actions = vec![
+            (OverlayAction::Resume, "Resume".to_string()),
+            (OverlayAction::Reset, "Reset console".to_string()),
+            (
+                OverlayAction::SaveState,
+                format!("Save state (slot {})", self.quick_slot),
+            ),
+            (
+                OverlayAction::LoadState,
+                format!("Load state (slot {})", self.quick_slot),
+            ),
+            (
+                OverlayAction::TakeScreenshot,
+                "Take screenshot (F12)".to_string(),
+            ),
+        ];
+        if self.disc_labels.len() > 1 {
+            let current = self
+                .disc_index
+                .saturating_add(1)
+                .min(self.disc_labels.len());
+            actions.push((
+                OverlayAction::SwapDisc,
+                format!("Swap disc… ({current}/{})", self.disc_labels.len()),
+            ));
+        }
+        actions.extend([
+            (OverlayAction::Settings, "Settings…".to_string()),
+            (OverlayAction::Controller, "Controller…".to_string()),
+            (
+                OverlayAction::ToggleFullscreen,
+                "Toggle fullscreen (F11)".to_string(),
+            ),
+            (
+                OverlayAction::ToggleFps,
+                if self.config.show_fps {
+                    "Hide FPS display (F3)".to_string()
+                } else {
+                    "Show FPS display (F3)".to_string()
+                },
+            ),
+            (
+                OverlayAction::QuitToLauncher,
+                "Quit to launcher".to_string(),
+            ),
+            (OverlayAction::Quit, "Quit TsundereStation".to_string()),
+        ]);
+        actions
+    }
+
     fn handle_overlay_nav(&mut self, nav: NavAction, ctx: &egui::Context) {
+        if self.swap_disc_open {
+            let count = self.disc_labels.len();
+            if count == 0 {
+                self.swap_disc_open = false;
+                return;
+            }
+            match nav {
+                NavAction::Up => {
+                    self.swap_disc_focus = (self.swap_disc_focus + count - 1) % count;
+                }
+                NavAction::Down => {
+                    self.swap_disc_focus = (self.swap_disc_focus + 1) % count;
+                }
+                NavAction::Confirm => self.request_swap_disc(self.swap_disc_focus),
+                NavAction::Cancel => self.swap_disc_open = false,
+                NavAction::Left | NavAction::Right => {}
+            }
+            return;
+        }
+
+        let actions = self.overlay_actions();
+        if actions.is_empty() {
+            return;
+        }
+        if self.menu_selection >= actions.len() {
+            self.menu_selection = 0;
+        }
         match nav {
             NavAction::Up => {
-                self.menu_selection = (self.menu_selection + OVERLAY_ACTIONS - 1) % OVERLAY_ACTIONS;
+                self.menu_selection = (self.menu_selection + actions.len() - 1) % actions.len();
             }
             NavAction::Down => {
-                self.menu_selection = (self.menu_selection + 1) % OVERLAY_ACTIONS;
+                self.menu_selection = (self.menu_selection + 1) % actions.len();
             }
             NavAction::Left => {
                 self.quick_slot = (self.quick_slot + 9) % 10;
@@ -587,26 +708,161 @@ impl App {
                 self.quick_slot = (self.quick_slot + 1) % 10;
             }
             NavAction::Cancel => self.close_overlay(),
-            NavAction::Confirm => self.activate_overlay_action(ctx),
+            NavAction::Confirm => {
+                let action = actions[self.menu_selection].0;
+                self.activate_overlay_action(action, ctx);
+            }
         }
     }
 
-    fn activate_overlay_action(&mut self, ctx: &egui::Context) {
-        match self.menu_selection {
-            0 => self.close_overlay(),
-            1 => {
+    fn activate_overlay_action(&mut self, action: OverlayAction, ctx: &egui::Context) {
+        match action {
+            OverlayAction::Resume => self.close_overlay(),
+            OverlayAction::Reset => {
                 self.worker.send(Command::Reset);
                 self.close_overlay();
             }
-            2 => self.worker.send(Command::SaveState(self.quick_slot)),
-            3 => self.worker.send(Command::LoadState(self.quick_slot)),
-            4 => self.settings_open = true,
-            5 => self.controller_open = true,
-            6 => self.toggle_fullscreen(ctx),
-            7 => self.toggle_fps_display(true),
-            8 => self.quit_to_launcher(),
-            9 => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-            _ => {}
+            OverlayAction::SaveState => self.worker.send(Command::SaveState(self.quick_slot)),
+            OverlayAction::LoadState => self.worker.send(Command::LoadState(self.quick_slot)),
+            OverlayAction::TakeScreenshot => self.take_screenshot(),
+            OverlayAction::SwapDisc => self.open_swap_disc_picker(),
+            OverlayAction::Settings => self.settings_open = true,
+            OverlayAction::Controller => self.controller_open = true,
+            OverlayAction::ToggleFullscreen => self.toggle_fullscreen(ctx),
+            OverlayAction::ToggleFps => self.toggle_fps_display(true),
+            OverlayAction::QuitToLauncher => self.quit_to_launcher(),
+            OverlayAction::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+        }
+    }
+
+    fn open_swap_disc_picker(&mut self) {
+        if self.disc_labels.len() <= 1 {
+            return;
+        }
+        self.swap_disc_focus = self.disc_index.min(self.disc_labels.len() - 1);
+        self.swap_disc_open = true;
+    }
+
+    fn request_swap_disc(&mut self, index: usize) {
+        self.swap_disc_open = false;
+        if index >= self.disc_labels.len() {
+            return;
+        }
+        if index == self.disc_index {
+            return;
+        }
+        self.worker.send(Command::SwapDisc(index));
+        self.push_toast(
+            format!("Inserting disc {}…", index + 1),
+            MessageKind::Info,
+            2.0,
+        );
+    }
+
+    fn swap_disc_window(&mut self, ctx: &egui::Context) {
+        if !self.swap_disc_open {
+            return;
+        }
+        let labels = self.disc_labels.clone();
+        if labels.len() <= 1 {
+            self.swap_disc_open = false;
+            return;
+        }
+        let current = self.disc_index.min(labels.len() - 1);
+        let mut focus = self.swap_disc_focus.min(labels.len() - 1);
+        let mut open = true;
+        let mut close = false;
+        let mut pick = None;
+        let window_frame = theme::window_frame(&ctx.global_style(), &self.ui_theme);
+
+        egui::Window::new("Select disc")
+            .id(egui::Id::new("disc-picker"))
+            .open(&mut open)
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .frame(window_frame)
+            .show(ctx, |ui| {
+                if theme::window_header(ui, "Select disc", &self.ui_theme) {
+                    close = true;
+                }
+                theme::window_body(ui, |ui| {
+                    ui.set_min_width(620.0);
+                    ui.weak(format!(
+                        "Current disc: {} — {}",
+                        current + 1,
+                        labels[current]
+                    ));
+                    ui.separator();
+                    for (index, label) in labels.iter().enumerate() {
+                        let selected = focus == index;
+                        let text = if index == current {
+                            format!("{label}  (current)")
+                        } else {
+                            label.clone()
+                        };
+                        let response =
+                            tv_row(ui, selected, &text, &self.ui_theme, ("disc-picker", index));
+                        if response.clicked() {
+                            focus = index;
+                            pick = Some(index);
+                        }
+                        if selected {
+                            response.scroll_to_me(Some(egui::Align::Center));
+                        }
+                    }
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Cancel").clicked() {
+                            close = true;
+                        }
+                        if ui.button("Insert disc").clicked() {
+                            pick = Some(focus);
+                        }
+                    });
+                    controller_hint(
+                        ui,
+                        "D-pad / left stick: choose  ·  Cross: insert  ·  Circle/PS: cancel",
+                        &self.ui_theme,
+                    );
+                });
+            });
+
+        self.swap_disc_focus = focus;
+        if close || pick.is_some() {
+            self.swap_disc_open = false;
+        }
+        if let Some(index) = pick {
+            self.request_swap_disc(index);
+        }
+    }
+
+    fn take_screenshot(&mut self) {
+        let Some((frame, _)) = self.host.video.latest() else {
+            self.push_toast(
+                "No video frame is available yet".into(),
+                MessageKind::Warning,
+                3.0,
+            );
+            return;
+        };
+        let raw_name = if self.game_title.is_empty() {
+            self.game_path.as_deref().unwrap_or("tsunderestation")
+        } else {
+            &self.game_title
+        };
+        match screenshot::capture(&frame, raw_name, &crate::config::screenshots_dir()) {
+            Ok(path) => self.push_toast(
+                format!("Screenshot saved to {}", path.display()),
+                MessageKind::Info,
+                4.0,
+            ),
+            Err(error) => self.push_toast(
+                format!("Could not save screenshot: {error:#}"),
+                MessageKind::Error,
+                6.0,
+            ),
         }
     }
 
@@ -634,10 +890,17 @@ impl App {
         // Game hotkeys are disabled while one of the frontend's text-entry
         // windows is open. Selectable labels can take focus too, so don't use
         // egui_wants_keyboard_input() here.
-        let typing = self.settings_open || self.controller_open || self.file_browser.is_some();
+        let typing = self.settings_open
+            || self.controller_open
+            || self.file_browser.is_some()
+            || self.memory_card.open;
         if !typing {
             if ctx.input(|i| i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::F1)) {
-                self.toggle_overlay();
+                if self.swap_disc_open {
+                    self.swap_disc_open = false;
+                } else {
+                    self.toggle_overlay();
+                }
             }
             if ctx.input(|i| i.key_pressed(egui::Key::F5)) {
                 self.worker.send(Command::SaveState(self.quick_slot));
@@ -650,6 +913,9 @@ impl App {
             }
             if ctx.input(|i| i.key_pressed(egui::Key::F11)) {
                 self.toggle_fullscreen(ctx);
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::F12)) {
+                self.take_screenshot();
             }
             if self.overlay_open && !self.settings_open && !self.controller_open {
                 if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
@@ -700,6 +966,7 @@ impl App {
         }
         self.overlay_open = true;
         self.menu_selection = 0;
+        self.swap_disc_open = false;
         self.paused_by_overlay = false;
         if self.config.input.pause_on_menu && !self.paused {
             self.paused = true;
@@ -715,6 +982,7 @@ impl App {
         self.overlay_open = false;
         self.settings_open = false;
         self.controller_open = false;
+        self.swap_disc_open = false;
 
         if self.screen == Screen::Game {
             // Drop the button press that selected Resume/Close immediately so
@@ -1213,22 +1481,10 @@ impl App {
             .unwrap_or_else(|| Path::new("bios"));
         let state_exists =
             state_path(&self.config.state_dir, state_identity, self.quick_slot).exists();
-        let labels = [
-            "Resume".to_string(),
-            "Reset console".to_string(),
-            format!("Save state (slot {})", self.quick_slot),
-            format!("Load state (slot {})", self.quick_slot),
-            "Settings…".to_string(),
-            "Controller…".to_string(),
-            "Toggle fullscreen (F11)".to_string(),
-            if self.config.show_fps {
-                "Hide FPS display (F3)".to_string()
-            } else {
-                "Show FPS display (F3)".to_string()
-            },
-            "Quit to launcher".to_string(),
-            "Quit TsundereStation".to_string(),
-        ];
+        let actions = self.overlay_actions();
+        if self.menu_selection >= actions.len() {
+            self.menu_selection = 0;
+        }
         let mut clicked = None;
 
         egui::Window::new(title)
@@ -1245,6 +1501,15 @@ impl App {
                 } else {
                     format!("slot {}", self.quick_slot)
                 });
+                if self.disc_labels.len() > 1 {
+                    let current = self.disc_index.min(self.disc_labels.len() - 1);
+                    ui.label(format!(
+                        "Disc {}/{}: {}",
+                        current + 1,
+                        self.disc_labels.len(),
+                        self.disc_labels[current]
+                    ));
+                }
                 ui.horizontal(|ui| {
                     ui.label("Slot");
                     egui::ComboBox::from_id_salt("save-slot")
@@ -1266,13 +1531,13 @@ impl App {
                     .max_height(570.0)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        for (index, label) in labels.iter().enumerate() {
+                        for (index, (action, label)) in actions.iter().enumerate() {
                             let focused = self.menu_selection == index;
                             let response =
                                 tv_row(ui, focused, label, &self.ui_theme, ("overlay", index));
                             if response.clicked() {
                                 self.menu_selection = index;
-                                clicked = Some(index);
+                                clicked = Some((index, *action));
                             }
                             if focused {
                                 response.scroll_to_me(Some(egui::Align::Center));
@@ -1287,9 +1552,12 @@ impl App {
                 );
             });
 
-        if let Some(index) = clicked {
+        if let Some((index, action)) = clicked {
             self.menu_selection = index;
-            self.activate_overlay_action(ctx);
+            self.activate_overlay_action(action, ctx);
+        }
+        if self.swap_disc_open {
+            self.swap_disc_window(ctx);
         }
     }
 

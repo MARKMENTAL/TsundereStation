@@ -69,6 +69,47 @@ pub struct retro_variable {
     pub value: *const c_char,
 }
 
+pub type retro_set_eject_state_t = extern "C" fn(ejected: bool) -> bool;
+pub type retro_get_eject_state_t = extern "C" fn() -> bool;
+pub type retro_get_image_index_t = extern "C" fn() -> c_uint;
+pub type retro_set_image_index_t = extern "C" fn(index: c_uint) -> bool;
+pub type retro_get_num_images_t = extern "C" fn() -> c_uint;
+pub type retro_replace_image_index_t =
+    extern "C" fn(index: c_uint, info: *const retro_game_info) -> bool;
+pub type retro_add_image_index_t = extern "C" fn() -> bool;
+pub type retro_set_initial_image_t = extern "C" fn(index: c_uint, path: *const c_char) -> bool;
+pub type retro_get_image_path_t =
+    extern "C" fn(index: c_uint, path: *mut c_char, len: usize) -> bool;
+pub type retro_get_image_label_t =
+    extern "C" fn(index: c_uint, label: *mut c_char, len: usize) -> bool;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct retro_disk_control_callback {
+    pub set_eject_state: Option<retro_set_eject_state_t>,
+    pub get_eject_state: Option<retro_get_eject_state_t>,
+    pub get_image_index: Option<retro_get_image_index_t>,
+    pub set_image_index: Option<retro_set_image_index_t>,
+    pub get_num_images: Option<retro_get_num_images_t>,
+    pub replace_image_index: Option<retro_replace_image_index_t>,
+    pub add_image_index: Option<retro_add_image_index_t>,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct retro_disk_control_ext_callback {
+    pub set_eject_state: Option<retro_set_eject_state_t>,
+    pub get_eject_state: Option<retro_get_eject_state_t>,
+    pub get_image_index: Option<retro_get_image_index_t>,
+    pub set_image_index: Option<retro_set_image_index_t>,
+    pub get_num_images: Option<retro_get_num_images_t>,
+    pub replace_image_index: Option<retro_replace_image_index_t>,
+    pub add_image_index: Option<retro_add_image_index_t>,
+    pub set_initial_image: Option<retro_set_initial_image_t>,
+    pub get_image_path: Option<retro_get_image_path_t>,
+    pub get_image_label: Option<retro_get_image_label_t>,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct retro_message {
