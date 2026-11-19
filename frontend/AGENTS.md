@@ -139,6 +139,7 @@ is missing, it emits a placeholder. Do not hand-edit generated files in
 | `packaging/release-template.md` | Release-draft template. |
 | `packaging/release-notes/` | Per-version release highlights. |
 | `readme-screenshots/` | README-only UI/game screenshots; not embedded or packaged. |
+| `tsunderestation-site/` | Static marketing site; plain HTML/CSS + Alpine CDN. |
 
 ## Architecture
 
@@ -401,6 +402,23 @@ Disc swapping uses the libretro disk-control interface:
 - Swap is available only when more than one image exists, normally an `.m3u`
   playlist. Do not add a swap row for single-disc content.
 - Clear stored callbacks when the core shuts down.
+
+## Marketing site
+
+`tsunderestation-site/` is a self-contained static promo site with no build step.
+
+- `index.html` is the page; `styles.css` is all styling.
+- Alpine.js 3 comes from the CDN and is used only for mobile nav, screenshot
+  tabs, FAQ and copy buttons.
+- Site images live in `tsunderestation-site/assets/` and are copied from
+  `assets/`/`readme-screenshots/`; keep the site deployable on its own.
+- The current AppImage is copied into `tsunderestation-site/downloads/` but is
+  ignored by `frontend/.gitignore`. Copy it again before a fresh deploy.
+- Version, filename, size, SHA-256 and GitHub release links in `index.html` are
+  static and must be updated with each release.
+- Preview with `python3 -m http.server -d tsunderestation-site` from `frontend/`.
+- No Rust code, AppImage rebuild or release-draft changes are required for site
+  edits unless assets/version metadata change.
 
 ## Testing and verification
 

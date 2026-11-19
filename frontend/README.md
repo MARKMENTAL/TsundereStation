@@ -456,6 +456,7 @@ core next to the executable, in the current directory, in
 - `src/filebrowser.rs`: small built-in file picker.
 - `assets/`: embedded themes, logo, splash motif and desktop icon.
 - `readme-screenshots/`: README-only UI and game screenshots; not embedded.
+- `tsunderestation-site/`: static marketing site, assets and download directory.
 - `packaging/`: desktop entry, AppImage build script and release templates.
 
 ## Development notes
@@ -463,3 +464,6 @@ core next to the executable, in the current directory, in
 Implementation decisions and coding invariants are documented in
 [`AGENTS.md`](AGENTS.md), including the theme contrast contract, egui gotchas,
 version/artifact policy and verification checklist.
+
+The static marketing site lives in [`tsunderestation-site/`](tsunderestation-site/).
+See its README for previewing, release metadata updates and deployment notes.
