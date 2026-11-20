@@ -153,9 +153,9 @@ pub struct HostState {
     pub base_width: AtomicU32,
     pub base_height: AtomicU32,
 
-    pub rumble_strong: AtomicU16,
-    pub rumble_weak: AtomicU16,
-    pub rumble_generation: AtomicU64,
+    pub rumble_strong: [AtomicU16; crate::libretro::input::PORTS],
+    pub rumble_weak: [AtomicU16; crate::libretro::input::PORTS],
+    pub rumble_generation: [AtomicU64; crate::libretro::input::PORTS],
 
     disk_control: Mutex<Option<DiskControl>>,
 }
@@ -182,9 +182,9 @@ impl HostState {
             fps_bits: AtomicU64::new(60.0f64.to_bits()),
             base_width: AtomicU32::new(320),
             base_height: AtomicU32::new(240),
-            rumble_strong: AtomicU16::new(0),
-            rumble_weak: AtomicU16::new(0),
-            rumble_generation: AtomicU64::new(0),
+            rumble_strong: std::array::from_fn(|_| AtomicU16::new(0)),
+            rumble_weak: std::array::from_fn(|_| AtomicU16::new(0)),
+            rumble_generation: std::array::from_fn(|_| AtomicU64::new(0)),
             disk_control: Mutex::new(None),
         }
     }
@@ -762,7 +762,8 @@ pub extern "C" fn audio_sample_batch(data: *const i16, frames: usize) -> usize {
 pub extern "C" fn input_poll() {}
 
 pub extern "C" fn input_state(port: c_uint, device: c_uint, index: c_uint, id: c_uint) -> i16 {
-    if port != 0 {
+    let port = port as usize;
+    if port >= crate::libretro::input::PORTS {
         return 0;
     }
     let Some(host) = HOST.get() else {
@@ -770,31 +771,32 @@ pub extern "C" fn input_state(port: c_uint, device: c_uint, index: c_uint, id: c
     };
     if device == ffi::RETRO_DEVICE_JOYPAD {
         if id == ffi::RETRO_DEVICE_ID_JOYPAD_MASK {
-            return (host.input.buttons() & 0xffff) as i16;
+            return (host.input.buttons(port) & 0xffff) as i16;
         }
         if id < 16 {
-            return ((host.input.buttons() >> id) & 1) as i16;
+            return ((host.input.buttons(port) >> id) & 1) as i16;
         }
     } else if device == ffi::RETRO_DEVICE_ANALOG {
         let idx = index as usize;
         let axis = id as usize;
-        return host.input.axis(idx, axis);
+        return host.input.axis(port, idx, axis);
     }
     0
 }
 
 pub extern "C" fn rumble_callback(port: c_uint, effect: c_int, strength: u16) -> bool {
-    if port != 0 {
+    let port = port as usize;
+    if port >= crate::libretro::input::PORTS {
         return false;
     }
     let Some(host) = HOST.get() else {
         return false;
     };
     match effect {
-        0 => host.rumble_strong.store(strength, Ordering::Relaxed),
-        1 => host.rumble_weak.store(strength, Ordering::Relaxed),
+        0 => host.rumble_strong[port].store(strength, Ordering::Relaxed),
+        1 => host.rumble_weak[port].store(strength, Ordering::Relaxed),
         _ => return false,
     }
-    host.rumble_generation.fetch_add(1, Ordering::Relaxed);
+    host.rumble_generation[port].fetch_add(1, Ordering::Relaxed);
     true
 }

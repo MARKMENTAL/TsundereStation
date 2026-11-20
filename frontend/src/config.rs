@@ -38,7 +38,9 @@ pub struct Config {
     pub last_game: String,
     pub recent_games: Vec<String>,
     pub controller_guid: String,
+    pub controller_guid_p2: String,
     pub port1_device: Option<u32>,
+    pub port2_device: Option<u32>,
     pub fullscreen: bool,
     pub show_splash: bool,
     pub splash_seconds: f32,
@@ -60,7 +62,9 @@ impl Default for Config {
             last_game: String::new(),
             recent_games: Vec::new(),
             controller_guid: String::new(),
+            controller_guid_p2: String::new(),
             port1_device: None,
+            port2_device: None,
             fullscreen: false,
             show_splash: true,
             splash_seconds: 4.0,
@@ -285,4 +289,37 @@ pub fn home_dir() -> PathBuf {
     env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_config_without_player2_fields_parses() {
+        let config: Config = toml::from_str("controller_guid = \"p1-guid\"\nport1_device = 258\n")
+            .expect("legacy config should parse");
+        assert_eq!(config.controller_guid, "p1-guid");
+        assert_eq!(config.port1_device, Some(258));
+        assert!(config.controller_guid_p2.is_empty());
+        assert_eq!(config.port2_device, None);
+    }
+
+    #[test]
+    fn player2_fields_roundtrip() {
+        let config = Config {
+            controller_guid: "p1-guid".into(),
+            controller_guid_p2: "p2-guid".into(),
+            port1_device: Some(258),
+            port2_device: Some(261),
+            ..Config::default()
+        };
+
+        let text = toml::to_string(&config).expect("serialize config");
+        let parsed: Config = toml::from_str(&text).expect("parse config");
+        assert_eq!(parsed.controller_guid, "p1-guid");
+        assert_eq!(parsed.controller_guid_p2, "p2-guid");
+        assert_eq!(parsed.port1_device, Some(258));
+        assert_eq!(parsed.port2_device, Some(261));
+    }
 }

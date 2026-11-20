@@ -13,10 +13,10 @@ use std::time::{Duration, Instant};
 pub enum Command {
     LoadGame {
         path: String,
-        port_device: Option<u32>,
+        port_devices: [Option<u32>; crate::libretro::input::PORTS],
     },
     BootBios {
-        port_device: Option<u32>,
+        port_devices: [Option<u32>; crate::libretro::input::PORTS],
     },
     UnloadGame,
     Pause(bool),
@@ -209,17 +209,16 @@ fn run_worker(
     let mut quit = false;
     let mut next_frame = Instant::now();
     let mut last_memcard_save = Instant::now();
-    let mut current_port_device: Option<u32> = None;
+    let mut current_ports: [Option<u32>; crate::libretro::input::PORTS] =
+        [None; crate::libretro::input::PORTS];
 
     while !quit {
         while let Ok(cmd) = rx.try_recv() {
             match cmd {
-                Command::LoadGame { path, port_device } => {
-                    if port_device.is_some() {
-                        current_port_device = port_device;
-                    }
+                Command::LoadGame { path, port_devices } => {
+                    current_ports = port_devices;
                     let p = PathBuf::from(&path);
-                    match core.load_game(Some(&p), port_device) {
+                    match core.load_game(Some(&p), &port_devices) {
                         Ok(()) => {
                             paused = false;
                             let title = p
@@ -242,11 +241,9 @@ fn run_worker(
                         }
                     }
                 }
-                Command::BootBios { port_device } => {
-                    if port_device.is_some() {
-                        current_port_device = port_device;
-                    }
-                    match core.load_game(None, port_device) {
+                Command::BootBios { port_devices } => {
+                    current_ports = port_devices;
+                    match core.load_game(None, &port_devices) {
                         Ok(()) => {
                             paused = false;
                             host.notify("Booted BIOS", MessageKind::Info, Duration::from_secs(2));
@@ -311,10 +308,10 @@ fn run_worker(
                     }
                 }
                 Command::SetPortDevice(port, device) => {
-                    core.set_port_device(port, device);
-                    if port == 0 {
-                        current_port_device = Some(device);
+                    if let Some(slot) = current_ports.get_mut(port as usize) {
+                        *slot = Some(device);
                     }
+                    core.set_port_device(port, device);
                 }
                 Command::SwapDisc(index) => match swap_disc(&host, index) {
                     Ok(()) => {
@@ -345,7 +342,7 @@ fn run_worker(
                     core = CoreHost::new(&core_path, host.clone(), &overrides)?;
                     let _ = events.send(WorkerEvent::Ready(core.info().clone()));
                     if let Some(game) = previous_game {
-                        match core.load_game(Some(&game), current_port_device) {
+                        match core.load_game(Some(&game), &current_ports) {
                             Ok(()) => {
                                 paused = false;
                                 let title = game

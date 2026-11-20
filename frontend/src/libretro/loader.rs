@@ -89,7 +89,7 @@ pub struct CoreHost {
     host: Arc<HostState>,
     game: Option<PathBuf>,
     loaded: bool,
-    port_device: Option<u32>,
+    port_devices: [Option<u32>; crate::libretro::input::PORTS],
     core_info: CoreInfo,
 }
 
@@ -140,7 +140,7 @@ impl CoreHost {
                 host,
                 game: None,
                 loaded: false,
-                port_device: None,
+                port_devices: [None; crate::libretro::input::PORTS],
                 core_info,
             })
         }
@@ -158,14 +158,22 @@ impl CoreHost {
         self.loaded
     }
 
-    pub fn load_game(&mut self, path: Option<&Path>, port_device: Option<u32>) -> Result<()> {
+    pub fn load_game(
+        &mut self,
+        path: Option<&Path>,
+        port_devices: &[Option<u32>; crate::libretro::input::PORTS],
+    ) -> Result<()> {
         if self.loaded {
             self.unload_game()?;
         }
         unsafe {
-            if let Some(device) = port_device {
-                (self.api.retro_set_controller_port_device)(0, device);
-                self.port_device = Some(device);
+            for (port, device) in port_devices.iter().enumerate() {
+                // An unconfigured port is explicitly disabled. The core keeps
+                // port state across loads, so leaving it untouched could keep
+                // a previous game's second pad enabled.
+                let device = device.unwrap_or(ffi::RETRO_DEVICE_NONE);
+                (self.api.retro_set_controller_port_device)(port as c_uint, device);
+                self.port_devices[port] = Some(device);
             }
 
             let c_path = match path {
@@ -239,11 +247,11 @@ impl CoreHost {
     }
 
     pub fn set_port_device(&mut self, port: u32, device: u32) {
+        if let Some(slot) = self.port_devices.get_mut(port as usize) {
+            *slot = Some(device);
+        }
         if self.loaded {
             unsafe { (self.api.retro_set_controller_port_device)(port, device) };
-            if port == 0 {
-                self.port_device = Some(device);
-            }
         }
     }
 

@@ -103,16 +103,16 @@ is missing, it emits a placeholder. Do not hand-edit generated files in
 
 ## Version and artifact policy
 
-- Current version: **0.2.0**.
+- Current version: **0.2.1**.
 - Do not bump the version for ordinary fixes or documentation changes unless
   explicitly asked.
 - Do not rename the AppImage major/minor path casually. Rebuild the existing
   version in place for fixes.
 - After rebuilding, report the new SHA256 of
-  `dist/TsundereStation-0.2.0-x86_64.AppImage`.
+  `dist/TsundereStation-0.2.1-x86_64.AppImage`.
 - Generated release files use tag `v<version>`, e.g.
-  `TsundereStation-v0.2.0-SHA256SUMS.txt` and
-  `TsundereStation-v0.2.0-release.md`. Upload the AppImage and checksum file
+  `TsundereStation-v0.2.1-SHA256SUMS.txt` and
+  `TsundereStation-v0.2.1-release.md`. Upload the AppImage and checksum file
   manually; paste the release draft as GitHub release notes.
 - Documentation-only changes do not require rebuilding the AppImage.
 
@@ -128,7 +128,7 @@ is missing, it emits a placeholder. Do not hand-edit generated files in
 | `src/config.rs` | Config schema, XDG paths, legacy migration, core search paths. |
 | `src/memory_card/` | Vendored JAPS1ME card engine and Memory Card Manager UI. |
 | `src/emu.rs` | Emulation worker thread, commands, save states, memory cards and disc swaps. |
-| `src/sdl_input.rs` | SDL controller discovery, mapping, rumble, navigation and shared audio callback. |
+| `src/sdl_input.rs` | SDL controller discovery, player slots, per-port mapping, rumble, navigation and shared audio callback. |
 | `src/splash.rs` | Embedded logo/motif decoding and window icon. |
 | `src/screenshot.rs` | JPEG screenshot naming and encoding. |
 | `src/libretro/` | Hand-written libretro ABI, core loader, host callbacks, video/audio/input handoff. |
@@ -157,7 +157,9 @@ Startup flows roughly like this:
 
 Emulation runs on a worker thread. Video frames are handed to the egui texture
 through `HostState`; audio goes through the shared SDL callback. Input is mapped
-from SDL to libretro input state.
+from SDL to per-port libretro snapshots: Player 1 writes port 1, Player 2 writes
+port 2. Controller identity is persistent by GUID and bound per session by SDL
+instance ID.
 
 ## UI and product decisions
 
@@ -168,7 +170,13 @@ from SDL to libretro input state.
 - Launcher, file-browser and pause-menu rows are full-width and at least 52 px
   tall. Focused rows get a strong outline and controller hints stay visible.
 - Controller navigation covers the launcher, file browser and pause overlay.
-  Settings, Controller and Memory Card Manager windows are mouse/keyboard for now.
+  Player 1 drives menus; Player 2 is game-only. If Player 1 is absent, Player 2
+  can drive the UI as a fallback. Settings, Controller and Memory Card Manager
+  windows are mouse/keyboard for now.
+- Player 2 is opt-in. SwanStation port 2 stays disabled until a controller is
+  assigned, and is set back to `RETRO_DEVICE_NONE` when cleared or disconnected.
+- The press that dismisses the splash is consumed until release, matching the
+  in-game menu-resume behavior.
 - The Memory Card Manager opens from the launcher and uses the same custom
   accent header as Settings. Keep one outer scroll area for its details pane;
   nesting save-list and detail scroll areas makes lower controls unreliable.
@@ -472,6 +480,10 @@ Visual checklist for UI changes:
 - Burgundy on Black repaired text.
 - An external theme loaded from `~/.config/tsunderestation/themes.toml`.
 - Settings/Controller/File Browser custom headers and close buttons.
+- Player 1 and Player 2 controller rows and their Controller-window assignments.
+- Two controllers in a two-player game, including Player 2 hotplug and clearing
+  Player 2 back to **None**.
+- Holding Cross or Enter through the splash does not activate a launcher row.
 - Toast text on info/warning/error backgrounds.
 - Memory Card Manager: launcher entry, local card list, save list and icon preview.
 - `.gme` warning and conversion, DuckStation card copy, duplicate import confirmation, delete confirmation and icon export.
@@ -482,7 +494,7 @@ For AppImage changes, build the AppImage and run its selftest:
 
 ```sh
 ./packaging/build-appimage.sh --skip-build
-sha256sum dist/TsundereStation-0.2.0-x86_64.AppImage
+sha256sum dist/TsundereStation-0.2.1-x86_64.AppImage
 ```
 
 ## Change checklist
@@ -514,7 +526,7 @@ affiliated with or endorsed by any anime or game rights holders.
 
 - Software renderer only; hardware GL/Vulkan rendering, upscaling and PGXP are
   not wired up.
-- One controller mapped to port 1; multitap is not exposed.
+- Two controllers mapped to ports 1 and 2; multitap is not exposed.
 - Multi-disc swapping requires an `.m3u` playlist; single-file images expose one
   image only.
 - Rewind, runahead and cheats are not exposed.

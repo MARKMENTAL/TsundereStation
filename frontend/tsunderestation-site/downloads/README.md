@@ -7,7 +7,7 @@ Before previewing the download link or deploying the site, copy the current
 release artifact here from `frontend/`:
 
 ```sh
-cp dist/TsundereStation-0.2.0-x86_64.AppImage tsunderestation-site/downloads/
+cp dist/TsundereStation-0.2.1-x86_64.AppImage tsunderestation-site/downloads/
 ```
 
 The exact file is listed in `../../.gitignore`. Update that path and
@@ -16,7 +16,7 @@ The exact file is listed in `../../.gitignore`. Update that path and
 Verify the served file:
 
 ```sh
-sha256sum TsundereStation-0.2.0-x86_64.AppImage
+sha256sum TsundereStation-0.2.1-x86_64.AppImage
 ```
 
 It must match the SHA-256 shown on the site.

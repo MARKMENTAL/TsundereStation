@@ -360,10 +360,27 @@ mouse/keyboard for now.
 
 Controller navigation:
 
-- Launcher: D-pad/left stick moves, Cross selects, Left/Right changes the selected controller
+- Launcher: D-pad/left stick moves, Cross selects, Left/Right changes the highlighted player’s controller
 - File browser: D-pad/left stick moves, Cross opens/chooses, Circle closes
 - In the pause menu: D-pad/left stick moves, Cross selects, Circle/PS closes
 - Keyboard equivalents: arrow keys move, `Enter` selects, `Esc` closes
+- Player 1 drives the launcher and menus. Player 2 is game-only and does not navigate the UI.
+
+Two-player setup:
+
+- The launcher has separate **Player 1 controller** and **Player 2 controller**
+  rows. Highlight a row and press Left/Right to cycle controllers; Player 2 also
+  has a **None** option.
+- The Controller window exposes both player assignments and the SwanStation
+  controller type for port 1 and port 2.
+- Player 2 is opt-in. SwanStation port 2 is enabled only while a Player 2
+  controller is assigned. Clearing it sends `RETRO_DEVICE_NONE`, so games do not
+  detect a phantom second pad.
+- Hot-plugging is supported. Disconnecting a pad zeroes its input; reconnecting
+  a pad whose GUID matches the saved assignment rebinds it.
+- Two controllers with identical GUIDs are distinguished by SDL instance ID for
+  the current session. Assignments persist by GUID, so identical pads may swap
+  order after a restart.
 
 The rest of the controls:
 
@@ -386,6 +403,8 @@ SDL game controller:
 - Left/Right changes the save-state slot
 - The button used to resume from the menu is discarded until it is released
   (up to one second), so it does not reach the game
+- The press used to skip the startup splash is consumed until it is released,
+  so it cannot activate a launcher row
 - Multi-disc `.m3u` games get a **Swap disc…** row in the pause menu. Select a
   disc, close the menu and resume without restarting the core. Single-disc
   images expose only one disc and show no swap row.
@@ -423,8 +442,7 @@ core next to the executable, in the current directory, in
 
 - Software renderer only. Hardware OpenGL/Vulkan rendering, internal-resolution
   upscaling and PGXP are not wired up yet.
-- One controller is mapped to port 1; multitap and multiple controllers are not
-  exposed yet.
+- Two controllers map to SwanStation ports 1 and 2; multitap is not exposed.
 - Multi-disc swapping requires an `.m3u` playlist; single-file images expose one
   image only.
 - Rewind, runahead and cheats are not exposed yet.
@@ -443,8 +461,9 @@ core next to the executable, in the current directory, in
 - `src/libretro/`: minimal hand-written libretro ABI, core loader, host callbacks,
   video/audio/input handoff.
 - `src/emu.rs`: emulation worker thread, commands, save states and memory cards.
-- `src/sdl_input.rs`: SDL controller discovery, mapping, rumble, menu navigation
-  and the shared SDL audio callback (including the splash motif).
+- `src/sdl_input.rs`: SDL controller discovery, player slots, per-port mapping,
+  rumble, menu navigation and the shared SDL audio callback (including the
+  splash motif).
 - `src/splash.rs`: embedded logo and motif decoding, branding helpers.
 - `src/app.rs`: splash, launcher, in-game overlay, settings and controller windows.
 - `src/theme.rs`: theme catalog, palette derivation, contrast rules, theme picker

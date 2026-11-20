@@ -145,7 +145,7 @@ fn run_selftest(
     let info = ch.info().clone();
     println!("core: {} {}", info.name, info.version);
     println!("core options: {}", info.options.len());
-    for (i, port) in info.ports.iter().enumerate().take(1) {
+    for (i, port) in info.ports.iter().enumerate() {
         for (name, id) in &port.types {
             println!("port {i}: {name} ({id:#x})");
         }
@@ -163,7 +163,7 @@ fn run_selftest(
         .map(|(_, id)| *id);
 
     host.audio.set_enabled(true);
-    ch.load_game(None, port)?;
+    ch.load_game(None, &[port, None])?;
     println!(
         "booted BIOS-only content: {}x{} @ {:.3} fps",
         host.base_width.load(std::sync::atomic::Ordering::Relaxed),

@@ -1,11 +1,13 @@
 use crate::config::Config;
 use crate::emu::{Command, WorkerEvent, WorkerHandle};
 use crate::filebrowser::{BrowseKind, BrowseResult, FileBrowser};
+use crate::libretro::ffi;
 use crate::libretro::host::{HostState, MessageKind};
+use crate::libretro::input::PORTS;
 use crate::libretro::loader::{state_path, CoreInfo};
 use crate::memory_card::MemoryCardManager;
 use crate::screenshot;
-use crate::sdl_input::{NavAction, SdlState};
+use crate::sdl_input::{ControllerEntry, NavAction, SdlState};
 use crate::splash::{self, SplashAudio};
 use crate::theme::{self, Theme, UiTheme};
 use crate::tv_ui::{controller_hint, tv_row};
@@ -53,6 +55,7 @@ enum LauncherItem {
     AddBios,
     OpenBios,
     Controller,
+    ControllerP2,
     RescanControllers,
     ControllerSettings,
     MemoryCardManager,
@@ -115,7 +118,9 @@ pub struct App {
     file_browser: Option<FileBrowser>,
     bios_files: Vec<(String, u64)>,
 
-    port_device: Option<u32>,
+    port_devices: [Option<u32>; PORTS],
+    p2_port_active: bool,
+    keyboard_lockout: bool,
     fullscreen: bool,
     auto_start: bool,
     auto_boot_bios: bool,
@@ -174,10 +179,11 @@ impl App {
         let sdl = SdlState::new(
             host.audio.clone(),
             &config.controller_guid,
+            &config.controller_guid_p2,
             splash_audio.clone(),
         )?;
-        if !sdl.selected_guid().is_empty() && sdl.selected_guid() != config.controller_guid {
-            config.controller_guid = sdl.selected_guid().to_string();
+        if !sdl.player_guid(0).is_empty() && sdl.player_guid(0) != config.controller_guid {
+            config.controller_guid = sdl.player_guid(0).to_string();
             let _ = config.save();
         }
 
@@ -189,7 +195,7 @@ impl App {
             config.state_dir.clone(),
         );
 
-        let port_device = config_port_device(&config);
+        let port_devices = [config.port1_device, config.port2_device];
         let splash_seconds = config.splash_seconds;
         let memory_card = MemoryCardManager::new(
             config.save_dir.clone(),
@@ -239,7 +245,9 @@ impl App {
             toasts: Vec::new(),
             file_browser: None,
             bios_files: Vec::new(),
-            port_device,
+            port_devices,
+            p2_port_active: false,
+            keyboard_lockout: false,
             fullscreen,
             auto_start,
             auto_boot_bios,
@@ -258,7 +266,7 @@ impl App {
         for event in events {
             match event {
                 WorkerEvent::Ready(info) => {
-                    self.resolve_port_device(&info);
+                    self.resolve_port_devices(&info);
                     self.core_info = Some(info);
                     self.last_error = None;
                     self.maybe_auto_start();
@@ -276,13 +284,15 @@ impl App {
                     self.loading_game = false;
                     self.last_error = None;
                     self.screen = Screen::Game;
+                    self.apply_player2_port();
                     self.overlay_open = false;
                     self.disc_labels.clear();
                     self.disc_index = 0;
                     self.swap_disc_open = false;
                     self.paused = false;
-                    self.sdl.clear_input_lockout();
-                    self.host.input.set(0, [0; 4]);
+                    self.host.input.clear();
+                    self.sdl
+                        .suppress_input_until_release(Duration::from_millis(1000));
                     self.texture = None;
                     self.texture_seq = 0;
                     self.texture_size = [0, 0];
@@ -305,8 +315,11 @@ impl App {
                     self.disc_labels.clear();
                     self.disc_index = 0;
                     self.swap_disc_open = false;
-                    self.sdl.clear_input_lockout();
-                    self.host.input.set(0, [0; 4]);
+                    self.host.input.clear();
+                    self.sdl
+                        .suppress_input_until_release(Duration::from_millis(1000));
+                    self.keyboard_lockout = true;
+                    self.p2_port_active = false;
                     self.host
                         .fast_forward
                         .store(false, std::sync::atomic::Ordering::Relaxed);
@@ -365,6 +378,12 @@ impl App {
         if let Ok(mut audio) = self.splash_audio.lock() {
             audio.stop();
         }
+        // Consume the press that dismissed the splash until it is released so
+        // it cannot activate a launcher row on the next frame.
+        self.host.input.clear();
+        self.sdl
+            .suppress_input_until_release(Duration::from_millis(1000));
+        self.keyboard_lockout = true;
         self.screen = Screen::Launcher;
         self.maybe_auto_start();
     }
@@ -463,27 +482,80 @@ impl App {
         });
     }
 
-    fn resolve_port_device(&mut self, info: &CoreInfo) {
-        let Some(port0) = info.ports.first() else {
-            return;
-        };
-        let valid = |id: u32| port0.types.iter().any(|(_, i)| *i == id);
-        let chosen = self
-            .config
-            .port1_device
-            .filter(|id| valid(*id))
-            .or_else(|| {
-                port0
-                    .types
-                    .iter()
-                    .find(|(name, _)| name.contains("DualShock") || name.contains("Analog"))
-                    .map(|(_, id)| *id)
-            })
-            .or_else(|| port0.types.first().map(|(_, id)| *id));
-        if let Some(id) = chosen {
-            self.port_device = Some(id);
-            self.config.port1_device = Some(id);
+    fn resolve_port_devices(&mut self, info: &CoreInfo) {
+        let mut changed = false;
+        for port in 0..PORTS {
+            let Some(port_info) = info.ports.get(port) else {
+                self.port_devices[port] = None;
+                continue;
+            };
+            let configured = if port == 0 {
+                self.config.port1_device
+            } else {
+                self.config.port2_device
+            };
+            let Some(id) = choose_port_device(&port_info.types, configured) else {
+                continue;
+            };
+            if self.port_devices[port] != Some(id) {
+                self.port_devices[port] = Some(id);
+                changed = true;
+            }
+            if port == 0 {
+                self.config.port1_device = Some(id);
+            } else {
+                self.config.port2_device = Some(id);
+            }
         }
+        if changed {
+            let _ = self.config.save();
+        }
+    }
+
+    fn ensure_player2_device(&mut self) {
+        if self.port_devices[1].is_none() {
+            if let Some(info) = self.core_info.clone() {
+                self.resolve_port_devices(&info);
+            }
+        }
+    }
+
+    /// Tell the core whether the second controller port should be enabled.
+    /// Keeping it disabled until a Player 2 pad is assigned avoids games
+    /// detecting a phantom second player.
+    fn sync_player2_port(&mut self) {
+        if self.screen != Screen::Game {
+            return;
+        }
+        let present = self.sdl.player_instance(1).is_some();
+        let device = if present { self.port_devices[1] } else { None };
+        let should_be_active = device.is_some();
+        if should_be_active == self.p2_port_active {
+            return;
+        }
+        self.worker.send(Command::SetPortDevice(
+            1,
+            device.unwrap_or(ffi::RETRO_DEVICE_NONE),
+        ));
+        self.p2_port_active = should_be_active;
+    }
+
+    /// Re-apply the Player 2 port state after a game has booted. This covers
+    /// cores that apply controller-port changes only after loading content.
+    fn apply_player2_port(&mut self) {
+        if self.screen != Screen::Game {
+            return;
+        }
+        let device = if self.sdl.player_instance(1).is_some() {
+            self.port_devices[1]
+        } else {
+            None
+        };
+        self.worker.send(Command::SetPortDevice(
+            1,
+            device.unwrap_or(ffi::RETRO_DEVICE_NONE),
+        ));
+        self.p2_port_active = device.is_some();
     }
 
     fn refresh_bios_files(&mut self) {
@@ -539,14 +611,35 @@ impl App {
         }
     }
 
+    fn ui_input_locked(&mut self, ctx: &egui::Context) -> bool {
+        if !self.keyboard_lockout {
+            return false;
+        }
+        let any_key_down = ctx.input(|i| !i.keys_down.is_empty());
+        if any_key_down {
+            return true;
+        }
+        self.keyboard_lockout = false;
+        false
+    }
+
     fn poll_sdl(&mut self, ctx: &egui::Context) {
         let menu = self.sdl.poll(&self.host, &self.config);
-        if !self.sdl.selected_guid().is_empty()
-            && self.sdl.selected_guid() != self.config.controller_guid
-        {
-            self.config.controller_guid = self.sdl.selected_guid().to_string();
+        let p1_guid = self.sdl.player_guid(0).to_string();
+        let p2_guid = self.sdl.player_guid(1).to_string();
+        let mut dirty = false;
+        if !p1_guid.is_empty() && p1_guid != self.config.controller_guid {
+            self.config.controller_guid = p1_guid;
+            dirty = true;
+        }
+        if p2_guid != self.config.controller_guid_p2 {
+            self.config.controller_guid_p2 = p2_guid;
+            dirty = true;
+        }
+        if dirty {
             let _ = self.config.save();
         }
+        self.sync_player2_port();
         if menu && self.screen == Screen::Game {
             if self.settings_open {
                 self.settings_open = false;
@@ -559,9 +652,9 @@ impl App {
 
         if self.overlay_open && !self.paused && !self.settings_open && !self.controller_open {
             // When the game keeps running behind the menu, do not let menu
-            // navigation leak into the emulated pad. While paused we leave the
-            // snapshot live so the controller diagnostic window can show it.
-            self.host.input.set(0, [0; 4]);
+            // navigation leak into either emulated pad. While paused we leave
+            // the snapshots live so the diagnostics can show them.
+            self.host.input.clear();
         }
         let nav_context = if self.file_browser.is_some() {
             Some(NavContext::FileBrowser)
@@ -988,7 +1081,7 @@ impl App {
             // Drop the button press that selected Resume/Close immediately so
             // the core cannot observe it on the first resumed frame, then keep
             // suppressing until the pad returns to neutral.
-            self.host.input.set(0, [0; 4]);
+            self.host.input.clear();
             self.sdl
                 .suppress_input_until_release(Duration::from_millis(1000));
         }
@@ -1000,17 +1093,28 @@ impl App {
         }
     }
 
+    fn load_port_devices(&self) -> [Option<u32>; PORTS] {
+        let p2 = if self.sdl.player_instance(1).is_some() {
+            self.port_devices[1]
+        } else {
+            None
+        };
+        [self.port_devices[0], p2]
+    }
+
     fn start_bios(&mut self) {
         if self.core_info.is_none() {
             return;
         }
-        self.sdl.clear_input_lockout();
-        self.host.input.set(0, [0; 4]);
+        self.host.input.clear();
+        self.sdl
+            .suppress_input_until_release(Duration::from_millis(1000));
+        self.keyboard_lockout = true;
         self.loading_game = true;
         self.last_error = None;
-        self.worker.send(Command::BootBios {
-            port_device: self.port_device,
-        });
+        let port_devices = self.load_port_devices();
+        self.p2_port_active = port_devices[1].is_some();
+        self.worker.send(Command::BootBios { port_devices });
     }
 
     fn start_game(&mut self) {
@@ -1027,14 +1131,15 @@ impl App {
             self.push_toast("Core is still starting".into(), MessageKind::Warning, 3.0);
             return;
         }
-        self.sdl.clear_input_lockout();
-        self.host.input.set(0, [0; 4]);
+        self.host.input.clear();
+        self.sdl
+            .suppress_input_until_release(Duration::from_millis(1000));
+        self.keyboard_lockout = true;
         self.loading_game = true;
         self.last_error = None;
-        self.worker.send(Command::LoadGame {
-            path,
-            port_device: self.port_device,
-        });
+        let port_devices = self.load_port_devices();
+        self.p2_port_active = port_devices[1].is_some();
+        self.worker.send(Command::LoadGame { path, port_devices });
     }
 
     fn quit_to_launcher(&mut self) {
@@ -1051,8 +1156,11 @@ impl App {
         self.paused = false;
         self.paused_by_overlay = false;
         self.loading_game = false;
-        self.sdl.clear_input_lockout();
-        self.host.input.set(0, [0; 4]);
+        self.host.input.clear();
+        self.sdl
+            .suppress_input_until_release(Duration::from_millis(1000));
+        self.keyboard_lockout = true;
+        self.p2_port_active = false;
         self.texture = None;
     }
 
@@ -1094,6 +1202,7 @@ impl App {
             LauncherItem::AddBios,
             LauncherItem::OpenBios,
             LauncherItem::Controller,
+            LauncherItem::ControllerP2,
             LauncherItem::RescanControllers,
             LauncherItem::ControllerSettings,
             LauncherItem::MemoryCardManager,
@@ -1123,9 +1232,19 @@ impl App {
             LauncherItem::AddBios => "Add BIOS image…".to_string(),
             LauncherItem::OpenBios => "Open BIOS folder".to_string(),
             LauncherItem::Controller => format!(
-                "Controller: {}  (Left/Right)",
-                self.sdl.selected_name().unwrap_or("None detected")
+                "Player 1 controller: {}  (Left/Right)",
+                self.sdl.player_name(0).unwrap_or("None detected")
             ),
+            LauncherItem::ControllerP2 => {
+                let name = self.sdl.player_name(1).unwrap_or_else(|| {
+                    if self.sdl.player_guid(1).is_empty() {
+                        "None"
+                    } else {
+                        "Disconnected"
+                    }
+                });
+                format!("Player 2 controller: {name}  (Left/Right)")
+            }
             LauncherItem::RescanControllers => "Rescan controllers".to_string(),
             LauncherItem::ControllerSettings => "Controller settings…".to_string(),
             LauncherItem::MemoryCardManager => "Memory Card Manager…".to_string(),
@@ -1143,23 +1262,61 @@ impl App {
         }
     }
 
-    fn cycle_controller(&mut self) {
-        let controllers = self.sdl.controllers().to_vec();
-        if controllers.is_empty() {
-            self.push_toast("No controller detected".into(), MessageKind::Warning, 3.0);
+    fn cycle_controller(&mut self, player: usize) {
+        if player >= PORTS {
             return;
         }
-        let current = controllers
+        let other = 1 - player;
+        let other_instance = self.sdl.player_instance(other);
+        let candidates: Vec<ControllerEntry> = self
+            .sdl
+            .controllers()
             .iter()
-            .position(|c| c.guid == self.sdl.selected_guid());
-        let next = match current {
-            Some(index) => (index + 1) % controllers.len(),
-            None => 0,
-        };
-        let guid = controllers[next].guid.clone();
-        self.sdl.select_guid(&guid);
-        self.config.controller_guid = guid;
+            .filter(|entry| Some(entry.instance_id) != other_instance)
+            .cloned()
+            .collect();
+        if candidates.is_empty() {
+            let message = if player == 0 {
+                "No controller detected"
+            } else {
+                "No second controller detected"
+            };
+            self.push_toast(message.into(), MessageKind::Warning, 3.0);
+            return;
+        }
+
+        let mut choices: Vec<Option<ControllerEntry>> = Vec::new();
+        if player == 1 {
+            choices.push(None);
+        }
+        choices.extend(candidates.into_iter().map(Some));
+
+        let current_instance = self.sdl.player_instance(player);
+        let current = choices
+            .iter()
+            .position(|choice| choice.as_ref().map(|entry| entry.instance_id) == current_instance)
+            .unwrap_or(0);
+        let next = (current + 1) % choices.len();
+
+        match &choices[next] {
+            Some(entry) => {
+                let instance = entry.instance_id;
+                let guid = entry.guid.clone();
+                self.sdl.set_player_instance(player, Some(instance));
+                if player == 0 {
+                    self.config.controller_guid = guid;
+                } else {
+                    self.config.controller_guid_p2 = guid;
+                }
+            }
+            None => {
+                self.sdl.set_player_instance(player, None);
+                self.config.controller_guid_p2.clear();
+            }
+        }
+        self.ensure_player2_device();
         let _ = self.config.save();
+        self.sync_player2_port();
     }
 
     fn open_browser(&mut self, kind: BrowseKind) {
@@ -1223,9 +1380,12 @@ impl App {
                     .arg(&self.config.bios_dir)
                     .spawn();
             }
-            LauncherItem::Controller => self.controller_open = true,
+            LauncherItem::Controller | LauncherItem::ControllerP2 => {
+                self.controller_open = true;
+            }
             LauncherItem::RescanControllers => {
-                self.sdl.refresh_controllers(None);
+                self.sdl.refresh_controllers();
+                self.ensure_player2_device();
                 self.push_toast("Controllers rescanned".into(), MessageKind::Info, 2.0);
             }
             LauncherItem::ControllerSettings => self.controller_open = true,
@@ -1256,11 +1416,11 @@ impl App {
             NavAction::Down => {
                 self.launcher_focus = (self.launcher_focus + 1) % items.len();
             }
-            NavAction::Left | NavAction::Right => {
-                if items[self.launcher_focus] == LauncherItem::Controller {
-                    self.cycle_controller();
-                }
-            }
+            NavAction::Left | NavAction::Right => match items[self.launcher_focus] {
+                LauncherItem::Controller => self.cycle_controller(0),
+                LauncherItem::ControllerP2 => self.cycle_controller(1),
+                _ => {}
+            },
             NavAction::Confirm => {
                 let item = items[self.launcher_focus];
                 self.activate_launcher_item(item, ctx);
@@ -1287,7 +1447,7 @@ impl App {
                     .show(ui, |ui| {
                         controller_hint(
                             ui,
-                            "D-pad / left stick: move  ·  Cross: select  ·  Left/Right: change controller",
+                            "D-pad / left stick: move  ·  Cross: select  ·  Left/Right: change player controller",
                             &self.ui_theme,
                         );
                     });
@@ -1381,6 +1541,7 @@ impl App {
                                     item,
                                     LauncherItem::AddBios
                                         | LauncherItem::Controller
+                                        | LauncherItem::ControllerP2
                                         | LauncherItem::MemoryCardManager
                                         | LauncherItem::ToggleSplash
                                         | LauncherItem::Settings
@@ -1939,7 +2100,7 @@ impl App {
         }
         let mut open = self.controller_open;
         let mut dirty = false;
-        let mut device_change = None;
+        let mut device_change: Option<(u32, u32)> = None;
         let mut rescan = false;
         let info = self.core_info.clone();
         let host = self.host.clone();
@@ -1955,127 +2116,207 @@ impl App {
             .title_bar(false)
             .frame(window_frame)
             .resizable(false)
-            .default_width(700.0)
+            .default_width(760.0)
             .show(ctx, |ui| {
                 if theme::window_header(ui, "Controller", &ui_theme) {
                     header_close = true;
                 }
                 theme::window_body(ui, |ui| {
-                ui.heading("SDL game controller");
-                let controllers = sdl.controllers().to_vec();
-                let current = sdl
-                    .selected_name()
-                    .unwrap_or("No controller detected")
-                    .to_string();
-                egui::ComboBox::from_id_salt("controller-window-select")
-                    .width(360.0)
-                    .selected_text(current)
-                    .show_ui(ui, |ui| {
-                        if controllers.is_empty() {
-                            ui.weak("No SDL game controllers found");
-                        }
-                        for controller in &controllers {
-                            if ui
-                                .selectable_label(
-                                    sdl.selected_guid() == controller.guid,
-                                    &controller.name,
-                                )
-                                .clicked()
-                            {
-                                sdl.select_guid(&controller.guid);
-                                config.controller_guid = controller.guid.clone();
-                                dirty = true;
-                            }
-                        }
-                    });
-                if ui.button("Rescan controllers").clicked() {
-                    rescan = true;
-                }
-                ui.weak("PS / Guide opens the in-game menu. If Steam opens instead, disable Steam Input for this controller.");
-                ui.separator();
+                    ui.heading("SDL game controllers");
+                    let controllers = sdl.controllers().to_vec();
 
-                if let Some(info) = &info {
-                    if let Some(port0) = info.ports.first() {
-                        let current_id = config
-                            .port1_device
-                            .or_else(|| port0.types.first().map(|(_, id)| *id));
-                        let current_name = current_id
-                            .and_then(|id| {
-                                port0
-                                    .types
-                                    .iter()
-                                    .find(|(_, i)| *i == id)
-                                    .map(|(n, _)| n.clone())
-                            })
-                            .unwrap_or_else(|| "Unknown".to_string());
-                        egui::ComboBox::from_id_salt("device-type")
-                            .width(300.0)
-                            .selected_text(current_name)
+                    ui.horizontal(|ui| {
+                        ui.label("Player 1");
+                        egui::ComboBox::from_id_salt("controller-window-p1")
+                            .width(380.0)
+                            .selected_text(player_display_name(sdl, 0))
                             .show_ui(ui, |ui| {
-                                for (name, id) in &port0.types {
+                                if controllers.is_empty() {
+                                    ui.weak("No SDL game controllers found");
+                                }
+                                let other = sdl.player_instance(1);
+                                for controller in &controllers {
+                                    if Some(controller.instance_id) == other {
+                                        continue;
+                                    }
+                                    let label = controller_label(&controllers, controller);
                                     if ui
                                         .selectable_label(
-                                            Some(*id) == current_id,
-                                            name,
+                                            sdl.player_instance(0)
+                                                == Some(controller.instance_id),
+                                            label,
                                         )
                                         .clicked()
                                     {
-                                        config.port1_device = Some(*id);
-                                        device_change = Some(*id);
+                                        sdl.set_player_instance(
+                                            0,
+                                            Some(controller.instance_id),
+                                        );
+                                        config.controller_guid = controller.guid.clone();
                                         dirty = true;
                                     }
                                 }
                             });
-                    }
-                }
+                    });
 
-                ui.add(
-                    egui::Slider::new(&mut config.input.deadzone, 0.0..=0.6)
-                        .text("Stick deadzone"),
-                );
-                if ui
-                    .checkbox(
-                        &mut config.input.pause_on_menu,
-                        "Pause game while the menu is open",
-                    )
-                    .changed()
-                {
-                    dirty = true;
-                }
-                ui.horizontal(|ui| {
-                    ui.label("Fallback menu combo:");
+                    ui.horizontal(|ui| {
+                        ui.label("Player 2");
+                        egui::ComboBox::from_id_salt("controller-window-p2")
+                            .width(380.0)
+                            .selected_text(player_display_name(sdl, 1))
+                            .show_ui(ui, |ui| {
+                                if ui
+                                    .selectable_label(
+                                        sdl.player_guid(1).is_empty()
+                                            && sdl.player_instance(1).is_none(),
+                                        "None",
+                                    )
+                                    .clicked()
+                                {
+                                    sdl.set_player_instance(1, None);
+                                    config.controller_guid_p2.clear();
+                                    dirty = true;
+                                }
+                                let other = sdl.player_instance(0);
+                                for controller in &controllers {
+                                    if Some(controller.instance_id) == other {
+                                        continue;
+                                    }
+                                    let label = controller_label(&controllers, controller);
+                                    if ui
+                                        .selectable_label(
+                                            sdl.player_instance(1)
+                                                == Some(controller.instance_id),
+                                            label,
+                                        )
+                                        .clicked()
+                                    {
+                                        sdl.set_player_instance(
+                                            1,
+                                            Some(controller.instance_id),
+                                        );
+                                        config.controller_guid_p2 = controller.guid.clone();
+                                        dirty = true;
+                                    }
+                                }
+                            });
+                    });
+
+                    if ui.button("Rescan controllers").clicked() {
+                        rescan = true;
+                    }
+                    ui.weak("Player 1 drives the launcher and menus. Player 2 is game-only. PS / Guide opens the in-game menu.");
+                    ui.separator();
+
+                    if let Some(info) = &info {
+                        for port in 0..PORTS {
+                            let Some(port_info) = info.ports.get(port) else {
+                                continue;
+                            };
+                            let current_id = if port == 0 {
+                                config.port1_device
+                            } else {
+                                config.port2_device
+                            }
+                            .or_else(|| port_info.types.first().map(|(_, id)| *id));
+                            let current_name = current_id
+                                .and_then(|id| {
+                                    port_info
+                                        .types
+                                        .iter()
+                                        .find(|(_, i)| *i == id)
+                                        .map(|(n, _)| n.clone())
+                                })
+                                .unwrap_or_else(|| "Unknown".to_string());
+                            ui.horizontal(|ui| {
+                                ui.label(if port == 0 {
+                                    "Port 1 (Player 1)"
+                                } else {
+                                    "Port 2 (Player 2)"
+                                });
+                                egui::ComboBox::from_id_salt(format!("device-type-{port}"))
+                                    .width(300.0)
+                                    .selected_text(current_name)
+                                    .show_ui(ui, |ui| {
+                                        for (name, id) in &port_info.types {
+                                            if ui
+                                                .selectable_label(
+                                                    Some(*id) == current_id,
+                                                    name,
+                                                )
+                                                .clicked()
+                                            {
+                                                if port == 0 {
+                                                    config.port1_device = Some(*id);
+                                                } else {
+                                                    config.port2_device = Some(*id);
+                                                }
+                                                device_change = Some((port as u32, *id));
+                                                dirty = true;
+                                            }
+                                        }
+                                    });
+                            });
+                        }
+                        if info.ports.len() < PORTS {
+                            ui.weak("This core exposes only one controller port.");
+                        }
+                    }
+
+                    ui.add(
+                        egui::Slider::new(&mut config.input.deadzone, 0.0..=0.6)
+                            .text("Stick deadzone"),
+                    );
                     if ui
-                        .selectable_label(
-                            config.input.menu_button == "guide",
-                            "None (PS/Guide only)",
+                        .checkbox(
+                            &mut config.input.pause_on_menu,
+                            "Pause game while the menu is open",
                         )
-                        .clicked()
+                        .changed()
                     {
-                        config.input.menu_button = "guide".into();
                         dirty = true;
                     }
-                    if ui
-                        .selectable_label(
-                            config.input.menu_button == "select_start",
-                            "Select + Start",
-                        )
-                        .clicked()
-                    {
-                        config.input.menu_button = "select_start".into();
-                        dirty = true;
+                    ui.horizontal(|ui| {
+                        ui.label("Fallback menu combo:");
+                        if ui
+                            .selectable_label(
+                                config.input.menu_button == "guide",
+                                "None (PS/Guide only)",
+                            )
+                            .clicked()
+                        {
+                            config.input.menu_button = "guide".into();
+                            dirty = true;
+                        }
+                        if ui
+                            .selectable_label(
+                                config.input.menu_button == "select_start",
+                                "Select + Start",
+                            )
+                            .clicked()
+                        {
+                            config.input.menu_button = "select_start".into();
+                            dirty = true;
+                        }
+                    });
+                    ui.separator();
+                    ui.label("Live input");
+                    for player in 0..PORTS {
+                        ui.monospace(format!(
+                            "Player {} buttons: {:016b}   axes: {} {} {} {}",
+                            player + 1,
+                            host.input.buttons(player) & 0xffff,
+                            host.input.axis(player, 0, 0),
+                            host.input.axis(player, 0, 1),
+                            host.input.axis(player, 1, 0),
+                            host.input.axis(player, 1, 1),
+                        ));
+                        ui.monospace(format!(
+                            "Player {} last button: {}",
+                            player + 1,
+                            sdl.last_button(player)
+                        ));
                     }
-                });
-                ui.separator();
-                ui.label("Live input");
-                ui.monospace(format!(
-                    "buttons: {:016b}   axes: {} {} {} {}",
-                    host.input.buttons() & 0xffff,
-                    host.input.axis(0, 0),
-                    host.input.axis(0, 1),
-                    host.input.axis(1, 0),
-                    host.input.axis(1, 1),
-                ));
-                ui.monospace(format!("last button: {}", sdl.last_button()));
                 });
             });
         if header_close {
@@ -2083,17 +2324,27 @@ impl App {
         }
         self.controller_open = open;
         if rescan {
-            self.sdl.refresh_controllers(None);
+            self.sdl.refresh_controllers();
             dirty = true;
         }
-        if let Some(id) = device_change {
-            self.port_device = Some(id);
-            self.worker.send(Command::SetPortDevice(0, id));
+        if let Some((port, id)) = device_change {
+            self.port_devices[port as usize] = Some(id);
+            let enabled = port == 0 || self.sdl.player_instance(1).is_some();
+            if enabled {
+                self.worker.send(Command::SetPortDevice(port, id));
+                if port == 1 {
+                    self.p2_port_active = true;
+                }
+            }
+            dirty = true;
         }
         if dirty {
-            self.config.controller_guid = self.sdl.selected_guid().to_string();
+            self.config.controller_guid = self.sdl.player_guid(0).to_string();
+            self.config.controller_guid_p2 = self.sdl.player_guid(1).to_string();
+            self.ensure_player2_device();
             let _ = self.config.save();
         }
+        self.sync_player2_port();
     }
 
     fn memory_card_window(&mut self, ctx: &egui::Context) {
@@ -2224,8 +2475,10 @@ impl eframe::App for App {
             ctx.request_repaint_after(Duration::from_millis(16));
             return;
         }
-        self.handle_frontend_keys(&ctx);
-        self.handle_hotkeys(&ctx);
+        if !self.ui_input_locked(&ctx) {
+            self.handle_frontend_keys(&ctx);
+            self.handle_hotkeys(&ctx);
+        }
 
         match self.screen {
             Screen::Splash => self.splash(ui),
@@ -2249,8 +2502,41 @@ impl eframe::App for App {
     }
 }
 
-fn config_port_device(config: &Config) -> Option<u32> {
-    config.port1_device
+fn choose_port_device(types: &[(String, u32)], configured: Option<u32>) -> Option<u32> {
+    let valid = |id: u32| types.iter().any(|(_, i)| *i == id);
+    configured
+        .filter(|id| valid(*id))
+        .or_else(|| {
+            types
+                .iter()
+                .find(|(name, _)| name.contains("DualShock") || name.contains("Analog"))
+                .map(|(_, id)| *id)
+        })
+        .or_else(|| types.first().map(|(_, id)| *id))
+}
+
+fn player_display_name(sdl: &SdlState, player: usize) -> String {
+    sdl.player_name(player)
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            if sdl.player_guid(player).is_empty() {
+                "None".to_string()
+            } else {
+                "Disconnected".to_string()
+            }
+        })
+}
+
+fn controller_label(controllers: &[ControllerEntry], entry: &ControllerEntry) -> String {
+    let duplicates = controllers
+        .iter()
+        .filter(|controller| controller.guid == entry.guid)
+        .count();
+    if duplicates > 1 {
+        format!("{} [{}]", entry.name, entry.instance_id)
+    } else {
+        entry.name.clone()
+    }
 }
 
 fn key_to_nav(ctx: &egui::Context) -> Option<NavAction> {
@@ -2284,5 +2570,59 @@ fn short_game_name(path: &str) -> String {
         out
     } else {
         name
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn types() -> Vec<(String, u32)> {
+        vec![
+            ("Digital Controller".to_string(), 1),
+            ("DualShock Controller".to_string(), 258),
+            ("Analog Controller".to_string(), 261),
+        ]
+    }
+
+    #[test]
+    fn configured_port_device_wins_when_valid() {
+        assert_eq!(choose_port_device(&types(), Some(1)), Some(1));
+    }
+
+    #[test]
+    fn invalid_port_device_falls_back_to_analog() {
+        assert_eq!(choose_port_device(&types(), Some(999)), Some(258));
+    }
+
+    #[test]
+    fn port_device_falls_back_to_first_type() {
+        let digital_only = vec![("Digital Controller".to_string(), 1)];
+        assert_eq!(choose_port_device(&digital_only, None), Some(1));
+    }
+
+    #[test]
+    fn empty_port_types_have_no_device() {
+        assert_eq!(choose_port_device(&[], Some(258)), None);
+    }
+
+    #[test]
+    fn duplicate_guid_controllers_show_instance_ids() {
+        let controllers = vec![
+            ControllerEntry {
+                index: 0,
+                instance_id: 10,
+                name: "DualShock 4".to_string(),
+                guid: "same".to_string(),
+            },
+            ControllerEntry {
+                index: 1,
+                instance_id: 11,
+                name: "DualShock 4".to_string(),
+                guid: "same".to_string(),
+            },
+        ];
+        assert!(controller_label(&controllers, &controllers[0]).contains("[10]"));
+        assert!(controller_label(&controllers, &controllers[1]).contains("[11]"));
     }
 }

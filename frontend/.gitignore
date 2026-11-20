@@ -4,4 +4,4 @@
 # Vendored reference checkout; the ported code lives in src/memory_card/.
 JAPS1ME/
 # Bundled site download; copy from dist before deploying.
-tsunderestation-site/downloads/TsundereStation-0.2.0-x86_64.AppImage
+tsunderestation-site/downloads/TsundereStation-0.2.1-x86_64.AppImage

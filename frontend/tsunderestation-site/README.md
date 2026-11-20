@@ -24,7 +24,7 @@ deploys as plain static files.
   - `launcher.png`, `pause-menu.png`, `settings.png` from `../readme-screenshots/`
   - `evangelion-1.jpg`, `evangelion-2.jpg`, `wwf-1.jpg`, `wwf-2.jpg` from the
     same screenshot collection
-- `downloads/TsundereStation-0.2.0-x86_64.AppImage` — current AppImage, copied
+- `downloads/TsundereStation-0.2.1-x86_64.AppImage` — current AppImage, copied
   from `../dist/`. This exact file is listed in `../.gitignore`; it is not
   committed. Copy it here before previewing/deploying the download link.
 - `downloads/README.md` — reminder for the download artifact workflow.
