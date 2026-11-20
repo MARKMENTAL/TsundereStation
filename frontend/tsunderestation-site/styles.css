@@ -15,7 +15,7 @@
   --coral: #f75f66;
   --pink: #f69dc8;
   --gradient: linear-gradient(90deg, #f3c300, #00ab9f, #2e6db4, #df0024);
-  --gradient-tsun: linear-gradient(90deg, #f69dc8, #767ee1, #6be4df);
+  --gradient-tsun: linear-gradient(90deg, #ff1786, #767ee1, #6be4df);
   --radius: 14px;
   --wrap: 1200px;
 }
