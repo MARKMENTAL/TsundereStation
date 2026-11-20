@@ -17,7 +17,7 @@
   --gradient: linear-gradient(90deg, #f3c300, #00ab9f, #2e6db4, #df0024);
   --gradient-tsun: linear-gradient(90deg, #f69dc8, #767ee1, #6be4df);
   --radius: 14px;
-  --wrap: 1120px;
+  --wrap: 1200px;
 }
 
 * { box-sizing: border-box; }
@@ -111,13 +111,19 @@ img { max-width: 100%; height: auto; }
 
 /* Hero */
 .hero { padding: 4.6rem 0 3.8rem; border-bottom: 1px solid var(--border); }
-.hero-grid { display: grid; grid-template-columns: 1.08fr .92fr; gap: 3rem; align-items: center; }
+.hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2.5rem; align-items: center; }
+.hero-logo {
+  display: block; width: 160px; height: 160px; object-fit: cover;
+  margin: .15rem 0 1.15rem; border-radius: 18px;
+  border: 1px solid rgba(246, 157, 200, .28);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, .5), 0 0 0 1px rgba(255, 255, 255, .04);
+}
 .eyebrow {
   margin: 0 0 1rem; color: var(--muted); text-transform: uppercase;
   letter-spacing: .14em; font-size: .76rem;
 }
 h1 {
-  margin: 0 0 .65rem; font-size: clamp(2.6rem, 6vw, 4.7rem);
+  margin: 0 0 .65rem; font-size: clamp(2.5rem, 5.2vw, 4.3rem);
   line-height: .98; letter-spacing: -.03em;
 }
 .gradient-text {
@@ -328,6 +334,7 @@ footer { border-top: 1px solid var(--border); padding: 2rem 0 0; background: #05
   .section { padding: 2.8rem 0; }
   .hero { padding: 2.4rem 0 2rem; }
   h1 { font-size: clamp(2.2rem, 10.5vw, 3rem); }
+  .hero-logo { width: 120px; height: 120px; border-radius: 14px; }
   .hero-sub { font-size: 1.05rem; }
   .cards { grid-template-columns: 1fr; }
   .game-grid { grid-template-columns: 1fr; }
