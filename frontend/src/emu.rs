@@ -391,6 +391,8 @@ fn run_worker(
         for _ in 0..frames {
             core.run_frame();
         }
+        host.emulated_frames
+            .fetch_add(frames as u64, Ordering::Relaxed);
 
         if last_memcard_save.elapsed() > Duration::from_secs(30) {
             core.save_memory_card();

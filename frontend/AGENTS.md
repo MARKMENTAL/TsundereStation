@@ -182,6 +182,9 @@ instance ID.
   nesting save-list and detail scroll areas makes lower controls unreliable.
 - `F12` takes a JPEG screenshot of the game frame. The pause menu also exposes
   **Take screenshot (F12)**.
+- The FPS/status overlay reports measured emulation frames per second from the
+  worker's monotonic frame counter. Do not replace it with `HostState::fps()`,
+  which is the core-reported frame-pacing target.
 - Multi-disc `.m3u` content adds **Swap disc…** to the pause menu. The disc
   picker must stay controller-navigable and must call disc-control functions on
   the emulation worker thread, never directly from the UI thread.

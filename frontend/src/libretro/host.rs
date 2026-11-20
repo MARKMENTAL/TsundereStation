@@ -149,7 +149,10 @@ pub struct HostState {
 
     pub shutdown: AtomicBool,
     pub fast_forward: AtomicBool,
+    /// Core-reported nominal refresh rate, used for frame pacing.
     pub fps_bits: AtomicU64,
+    /// Monotonic count of frames actually run by the emulation worker.
+    pub emulated_frames: AtomicU64,
     pub base_width: AtomicU32,
     pub base_height: AtomicU32,
 
@@ -180,6 +183,7 @@ impl HostState {
             shutdown: AtomicBool::new(false),
             fast_forward: AtomicBool::new(false),
             fps_bits: AtomicU64::new(60.0f64.to_bits()),
+            emulated_frames: AtomicU64::new(0),
             base_width: AtomicU32::new(320),
             base_height: AtomicU32::new(240),
             rumble_strong: std::array::from_fn(|_| AtomicU16::new(0)),
@@ -191,6 +195,10 @@ impl HostState {
 
     pub fn fps(&self) -> f64 {
         f64::from_bits(self.fps_bits.load(Ordering::Relaxed)).max(1.0)
+    }
+
+    pub fn emulated_frames(&self) -> u64 {
+        self.emulated_frames.load(Ordering::Relaxed)
     }
 
     pub fn notify(&self, text: impl Into<String>, kind: MessageKind, ttl: Duration) {

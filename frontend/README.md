@@ -188,6 +188,9 @@ config file controls the duration.
 
 The FPS/status overlay is hidden by default. Toggle it in-game with `F3`, from
 the pause menu, or with the “Show FPS/status overlay” checkbox in the launcher.
+It reports measured emulation frames per second, not the core’s nominal refresh
+rate, so frame pacing problems and fast-forward are visible. Pausing keeps the
+last measured value on screen.
 
 Press `F12` or use **Take screenshot (F12)** in the pause menu to save a JPEG
 under `~/.local/share/tsunderestation/screenshots`. Files are named

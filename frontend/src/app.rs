@@ -72,6 +72,69 @@ struct Toast {
     until: Instant,
 }
 
+/// Measures emulated frames per second from the worker's monotonic frame
+/// counter. The core-reported rate in `HostState::fps()` is only a pacing
+/// target, so it cannot tell us whether the emulator is actually keeping up.
+#[derive(Default)]
+struct FpsMeter {
+    sample: Option<(Instant, u64)>,
+    value: f64,
+    has_value: bool,
+}
+
+impl FpsMeter {
+    fn reset(&mut self) {
+        self.sample = None;
+        self.value = 0.0;
+        self.has_value = false;
+    }
+
+    /// Drop the current timing baseline but keep the last measured value, so
+    /// pause/menu transitions do not make the counter jump to zero.
+    fn suspend(&mut self) {
+        self.sample = None;
+    }
+
+    fn update(&mut self, frames: u64, now: Instant) {
+        let Some((sample_at, sample_frames)) = self.sample else {
+            self.sample = Some((now, frames));
+            return;
+        };
+        let elapsed = now.saturating_duration_since(sample_at);
+        if elapsed < Duration::from_millis(500) {
+            return;
+        }
+        // A long UI/window stall would otherwise produce one bogus sample.
+        if elapsed > Duration::from_secs(2) {
+            self.sample = Some((now, frames));
+            return;
+        }
+        let delta = frames.saturating_sub(sample_frames);
+        let instant = delta as f64 / elapsed.as_secs_f64();
+        self.value = if delta == 0 {
+            0.0
+        } else if self.value > 0.0 {
+            self.value * 0.5 + instant * 0.5
+        } else {
+            instant
+        };
+        self.has_value = true;
+        self.sample = Some((now, frames));
+    }
+
+    fn value(&self) -> f64 {
+        self.value
+    }
+
+    fn display(&self) -> String {
+        if self.has_value {
+            format!("{:.1} FPS", self.value())
+        } else {
+            "-- FPS".to_string()
+        }
+    }
+}
+
 pub struct App {
     config: Config,
     host: Arc<HostState>,
@@ -100,6 +163,7 @@ pub struct App {
     controller_open: bool,
     memory_card: MemoryCardManager,
     quick_slot: u32,
+    fps: FpsMeter,
 
     texture: Option<egui::TextureHandle>,
     texture_seq: u64,
@@ -231,6 +295,7 @@ impl App {
             controller_open: false,
             memory_card,
             quick_slot: 0,
+            fps: FpsMeter::default(),
             texture: None,
             texture_seq: 0,
             texture_size: [0, 0],
@@ -284,6 +349,7 @@ impl App {
                     self.loading_game = false;
                     self.last_error = None;
                     self.screen = Screen::Game;
+                    self.fps.reset();
                     self.apply_player2_port();
                     self.overlay_open = false;
                     self.disc_labels.clear();
@@ -304,6 +370,7 @@ impl App {
                 WorkerEvent::Unloaded => {
                     self.screen = Screen::Launcher;
                     self.launcher_focus = 0;
+                    self.fps.reset();
                     self.game_path = None;
                     self.loading_game = false;
                     self.overlay_open = false;
@@ -621,6 +688,14 @@ impl App {
         }
         self.keyboard_lockout = false;
         false
+    }
+
+    fn update_measured_fps(&mut self) {
+        if self.screen != Screen::Game || self.paused || !self.config.show_fps {
+            self.fps.suspend();
+            return;
+        }
+        self.fps.update(self.host.emulated_frames(), Instant::now());
     }
 
     fn poll_sdl(&mut self, ctx: &egui::Context) {
@@ -1156,6 +1231,7 @@ impl App {
         self.paused = false;
         self.paused_by_overlay = false;
         self.loading_game = false;
+        self.fps.reset();
         self.host.input.clear();
         self.sdl
             .suppress_input_until_release(Duration::from_millis(1000));
@@ -1599,7 +1675,7 @@ impl App {
                 .fast_forward
                 .load(std::sync::atomic::Ordering::Relaxed);
             let status = if self.config.show_fps {
-                let mut info = format!("{:.2} Hz", self.host.fps());
+                let mut info = self.fps.display();
                 if self.paused {
                     info.push_str(" · paused");
                 }
@@ -1634,7 +1710,7 @@ impl App {
         } else {
             self.game_title.clone()
         };
-        let fps = self.host.fps();
+        let fps = self.fps.display();
         let state_identity = self
             .game_path
             .as_deref()
@@ -1658,7 +1734,7 @@ impl App {
                 ui.set_min_width(620.0);
                 ui.heading(if self.paused { "Paused" } else { "Menu" });
                 ui.weak(if self.config.show_fps {
-                    format!("{fps:.2} Hz · slot {}", self.quick_slot)
+                    format!("{fps} · slot {}", self.quick_slot)
                 } else {
                     format!("slot {}", self.quick_slot)
                 });
@@ -2467,6 +2543,7 @@ impl eframe::App for App {
         self.process_worker_events();
         self.process_host_messages();
         self.poll_sdl(&ctx);
+        self.update_measured_fps();
         let splash_finished = self.handle_splash(&ctx);
         if splash_finished {
             // Consume the key/click/controller press that dismissed the splash
@@ -2604,6 +2681,44 @@ mod tests {
     #[test]
     fn empty_port_types_have_no_device() {
         assert_eq!(choose_port_device(&[], Some(258)), None);
+    }
+
+    #[test]
+    fn fps_meter_waits_for_first_sample() {
+        let mut meter = FpsMeter::default();
+        assert_eq!(meter.display(), "-- FPS");
+        meter.update(0, Instant::now());
+        assert_eq!(meter.display(), "-- FPS");
+    }
+
+    #[test]
+    fn fps_meter_reports_measured_rate() {
+        let base = Instant::now();
+        let mut meter = FpsMeter::default();
+        meter.update(0, base);
+        meter.update(30, base + Duration::from_millis(500));
+        assert!((meter.value() - 60.0).abs() < 0.01);
+        assert_eq!(meter.display(), "60.0 FPS");
+    }
+
+    #[test]
+    fn fps_meter_suspend_keeps_last_value() {
+        let base = Instant::now();
+        let mut meter = FpsMeter::default();
+        meter.update(0, base);
+        meter.update(30, base + Duration::from_millis(500));
+        let before = meter.display();
+        meter.suspend();
+        assert_eq!(meter.display(), before);
+    }
+
+    #[test]
+    fn fps_meter_zero_frames_reports_zero() {
+        let base = Instant::now();
+        let mut meter = FpsMeter::default();
+        meter.update(100, base);
+        meter.update(100, base + Duration::from_millis(500));
+        assert_eq!(meter.display(), "0.0 FPS");
     }
 
     #[test]
