@@ -470,6 +470,11 @@ then reads the finished frame back into the normal UI texture path. It is fixed
 at 1× native PS1 resolution in this release. The FPS/status overlay appends
 `HW` or `SW` so the active path is visible.
 
+The renderer choice is locked for the running app. Changing games or restarting
+the core reuses the same EGL context and renderer decision; only changing **GPU
+Renderer** and pressing **Restart core** re-resolves it once. A fresh core may
+briefly show `SW` while it boots before switching to hardware.
+
 The AppImage deliberately leaves `libEGL`, `libGL`, X11/Wayland and Mesa/GBM/DRM
 libraries to the host. Bundling those breaks graphics initialization on some
 systems, including Asahi Linux.

@@ -215,6 +215,20 @@ setup fails, `SET_HW_RENDER` returns false and the core uses the software
 renderer. Keep the AppImage free of bundled `libEGL`, `libGL`, X11/Wayland,
 GBM/DRM and ALSA libraries; those must come from the host.
 
+The renderer decision is cached per preference and reused across core restarts;
+do not re-decide it on every `SET_HW_RENDER`. `CoreHost::new` resolves the
+preference before `retro_init` so a Software choice is reflected even though the
+core never calls `SET_HW_RENDER` in that mode. Only changing
+`swanstation_GPU_Renderer` and restarting the core may re-resolve it. On a cache
+hit, `set_hw_render` must call `Hardware::make_current()` before invoking the
+core's `context_reset`, and it must never create the EGL context after eframe is
+live. Keep the EGL context prepared even in Software mode so switching back to
+OpenGL can reuse it without violating that startup ordering.
+
+`hardware_active` follows the actual frame path: hardware frames set it, and
+software frames clear it. Do not clear it during renderer negotiation or core
+shutdown; a fresh core may legitimately show `SW` for a few boot frames.
+
 ### Game shader
 
 `src/shader.rs` applies a built-in GLSL post-processing stack to the game

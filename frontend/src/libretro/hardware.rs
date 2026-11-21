@@ -21,11 +21,70 @@ const EGL_PLATFORM_SURFACELESS_MESA: egl::Enum = 0x31DD;
 const FBO_WIDTH: u32 = 1024;
 const FBO_HEIGHT: u32 = 1024;
 
-static WARNED: AtomicBool = AtomicBool::new(false);
 static PREPARE_FAILED: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RendererDecision {
+    OpenGl,
+    Software,
+}
+
+/// The renderer choice is resolved once per preference and then reused for
+/// every core load. Re-reading the option on each core is fine; deciding again
+/// (and potentially falling back) is not.
+#[derive(Debug, Default)]
+struct RendererPolicy {
+    preference: Option<String>,
+    decision: Option<RendererDecision>,
+    warned: bool,
+    initialised: bool,
+}
+
+impl RendererPolicy {
+    fn resolve(&mut self, requested: &str, prepared: bool) -> RendererDecision {
+        let preference = normalize_preference(requested);
+        if self.preference.as_deref() != Some(preference) || self.decision.is_none() {
+            self.preference = Some(preference.to_string());
+            self.decision = Some(if preference == "Software" || !prepared {
+                RendererDecision::Software
+            } else {
+                RendererDecision::OpenGl
+            });
+            self.warned = false;
+        }
+        self.decision.expect("renderer decision resolved above")
+    }
+
+    fn lock_software(&mut self) -> bool {
+        self.decision = Some(RendererDecision::Software);
+        let warn = !self.warned;
+        self.warned = true;
+        warn
+    }
+
+    fn first_initialisation(&mut self) -> bool {
+        let first = !self.initialised;
+        self.initialised = true;
+        first
+    }
+}
+
+fn normalize_preference(value: &str) -> &str {
+    match value {
+        "OpenGL" => "OpenGL",
+        "Software" => "Software",
+        _ => "Auto",
+    }
+}
 
 thread_local! {
     static HARDWARE: RefCell<Option<Hardware>> = const { RefCell::new(None) };
+    static RENDERER: RefCell<RendererPolicy> = const { RefCell::new(RendererPolicy {
+        preference: None,
+        decision: None,
+        warned: false,
+        initialised: false,
+    }) };
 }
 
 struct Hardware {
@@ -280,7 +339,28 @@ fn init_display(egl: &egl::DynamicInstance<egl::EGL1_4>) -> Result<egl::Display>
     Err(anyhow!("could not initialize an EGL display"))
 }
 
-pub fn set_hw_render(cb: &mut ffi::retro_hw_render_callback, host: &HostState) -> bool {
+fn hardware_prepared() -> bool {
+    !PREPARE_FAILED.load(Ordering::Relaxed) && HARDWARE.with(|slot| slot.borrow().is_some())
+}
+
+pub fn resolve_renderer(requested: &str, host: &HostState) -> RendererDecision {
+    let prepared = hardware_prepared();
+    let decision = RENDERER.with(|slot| slot.borrow_mut().resolve(requested, prepared));
+    host.set_renderer_decision(decision);
+    decision
+}
+
+fn lock_software(host: &HostState) -> bool {
+    let warn = RENDERER.with(|slot| slot.borrow_mut().lock_software());
+    host.set_renderer_decision(RendererDecision::Software);
+    warn
+}
+
+pub fn set_hw_render(
+    cb: &mut ffi::retro_hw_render_callback,
+    host: &HostState,
+    requested: &str,
+) -> bool {
     if !matches!(
         cb.context_type,
         ffi::RETRO_HW_CONTEXT_OPENGL | ffi::RETRO_HW_CONTEXT_OPENGL_CORE
@@ -288,34 +368,28 @@ pub fn set_hw_render(cb: &mut ffi::retro_hw_render_callback, host: &HostState) -
         return false;
     }
 
-    if PREPARE_FAILED.load(Ordering::Relaxed) {
-        if !WARNED.swap(true, Ordering::Relaxed) {
-            host.notify(
-                "OpenGL hardware rendering unavailable; using software rendering",
-                MessageKind::Warning,
-                Duration::from_secs(5),
-            );
-        }
+    if resolve_renderer(requested, host) == RendererDecision::Software {
         return false;
     }
 
     let result: Result<()> = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         HARDWARE.with(|slot| {
-            if slot.borrow().is_none() {
-                let hardware = Hardware::new()?;
-                *slot.borrow_mut() = Some(hardware);
-            }
             let mut slot = slot.borrow_mut();
-            let hardware = slot.as_mut().expect("hardware initialized above");
+            let hardware = slot
+                .as_mut()
+                .ok_or_else(|| anyhow!("the EGL context was not prepared before the UI started"))?;
             hardware.context_destroy = cb.context_destroy;
+            hardware
+                .make_current()
+                .context("restoring the worker EGL context")?;
             Ok(())
         })
     }))
     .unwrap_or_else(|_| Err(anyhow!("an EGL/OpenGL operation panicked")));
 
     if let Err(e) = result {
-        log::warn!("Could not initialise OpenGL hardware rendering: {e:#}");
-        if !WARNED.swap(true, Ordering::Relaxed) {
+        log::warn!("Could not use OpenGL hardware rendering: {e:#}");
+        if lock_software(host) {
             host.notify(
                 "OpenGL hardware rendering unavailable; using software rendering",
                 MessageKind::Warning,
@@ -333,9 +407,12 @@ pub fn set_hw_render(cb: &mut ffi::retro_hw_render_callback, host: &HostState) -
     cb.cache_context = false;
 
     host.hardware_available.store(true, Ordering::Relaxed);
-    host.hardware_active.store(false, Ordering::Relaxed);
-    WARNED.store(false, Ordering::Relaxed);
-    log::info!("hardware: OpenGL renderer initialised");
+    let first = RENDERER.with(|slot| slot.borrow_mut().first_initialisation());
+    if first {
+        log::info!("hardware: OpenGL renderer initialised");
+    } else {
+        log::debug!("hardware: reusing prepared OpenGL renderer");
+    }
 
     // Do not hold a borrow of HARDWARE here: the core's context_reset calls
     // get_proc_address/get_current_framebuffer back into this module.
@@ -362,7 +439,6 @@ pub fn prepare_on_worker() {
     match result {
         Ok(()) => {
             PREPARE_FAILED.store(false, Ordering::Relaxed);
-            WARNED.store(false, Ordering::Relaxed);
             if let Some(host) = HOST.get() {
                 host.hardware_available.store(true, Ordering::Relaxed);
             }
@@ -370,9 +446,9 @@ pub fn prepare_on_worker() {
         }
         Err(e) => {
             PREPARE_FAILED.store(true, Ordering::Relaxed);
-            WARNED.store(true, Ordering::Relaxed);
             log::warn!("Could not prepare the EGL context: {e:#}");
             if let Some(host) = HOST.get() {
+                lock_software(host);
                 host.notify(
                     "OpenGL hardware rendering unavailable; using software rendering",
                     MessageKind::Warning,
@@ -424,18 +500,27 @@ pub fn release_context(core_is_loaded: bool) {
         let mut slot = slot.borrow_mut();
         if let Some(hardware) = slot.as_mut() {
             hardware.context_destroy = None;
-            if let Err(e) = hardware.make_current() {
-                log::warn!("Could not restore the worker EGL context: {e:#}");
+            match hardware.make_current() {
+                Ok(()) => true,
+                Err(e) => {
+                    log::warn!("Could not restore the worker EGL context: {e:#}");
+                    false
+                }
             }
-            true
         } else {
             false
         }
     });
 
     if let Some(host) = HOST.get() {
-        host.hardware_active.store(false, Ordering::Relaxed);
         host.hardware_available.store(available, Ordering::Relaxed);
+        if !available && lock_software(host) {
+            host.notify(
+                "OpenGL hardware rendering unavailable; using software rendering",
+                MessageKind::Warning,
+                Duration::from_secs(5),
+            );
+        }
     }
 }
 
@@ -491,5 +576,44 @@ mod tests {
         assert_eq!(&flipped[4..8], &[0, 255, 0, 255]);
         assert_eq!(&flipped[8..12], &[255, 0, 0, 255]);
         assert_eq!(&flipped[12..16], &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn renderer_policy_resolves_once_per_preference() {
+        let mut policy = RendererPolicy::default();
+        assert_eq!(policy.resolve("Auto", true), RendererDecision::OpenGl);
+        // A temporary preparation failure must not renegotiate a locked choice.
+        assert_eq!(policy.resolve("Auto", false), RendererDecision::OpenGl);
+        assert_eq!(policy.resolve("OpenGL", true), RendererDecision::OpenGl);
+
+        assert_eq!(policy.resolve("Software", true), RendererDecision::Software);
+        assert_eq!(
+            policy.resolve("Software", false),
+            RendererDecision::Software
+        );
+
+        // Changing the preference resolves again.
+        assert_eq!(policy.resolve("Auto", false), RendererDecision::Software);
+        assert_eq!(policy.resolve("Auto", true), RendererDecision::Software);
+    }
+
+    #[test]
+    fn renderer_policy_lock_software_warns_once() {
+        let mut policy = RendererPolicy::default();
+        assert_eq!(policy.resolve("OpenGL", true), RendererDecision::OpenGl);
+        assert!(policy.lock_software());
+        assert!(!policy.lock_software());
+        assert_eq!(policy.resolve("OpenGL", true), RendererDecision::Software);
+    }
+
+    #[test]
+    fn renderer_policy_unsupported_values_fall_back_to_auto() {
+        let mut policy = RendererPolicy::default();
+        assert_eq!(policy.resolve("Vulkan", true), RendererDecision::OpenGl);
+        assert_eq!(
+            policy.resolve("Auto", true),
+            RendererDecision::OpenGl,
+            "unsupported values should normalize to the same Auto preference"
+        );
     }
 }

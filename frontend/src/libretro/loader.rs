@@ -117,6 +117,16 @@ impl CoreHost {
             // The core has now registered its options; apply user overrides
             // before retro_init(), which reads them in LoadSettings().
             host.apply_saved_options(saved_options);
+            // Lock the renderer choice before the core boots. Software cores
+            // never call SET_HW_RENDER, so resolving there alone would leave a
+            // stale OpenGL decision in the UI.
+            let requested = host
+                .options
+                .read()
+                .unwrap()
+                .current("swanstation_GPU_Renderer")
+                .unwrap_or_else(|| "Auto".to_string());
+            crate::libretro::hardware::resolve_renderer(&requested, &host);
 
             (api.retro_set_video_refresh)(video_refresh);
             (api.retro_set_audio_sample)(audio_sample);

@@ -7,7 +7,7 @@ use std::collections::{HashMap, VecDeque};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_uint, c_void};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
@@ -167,6 +167,9 @@ pub struct HostState {
     pub hardware_available: AtomicBool,
     /// Set once the core has actually delivered a hardware-rendered frame.
     pub hardware_active: AtomicBool,
+    /// Renderer decision resolved for the current preference.
+    /// 0 = unresolved, 1 = OpenGL, 2 = software.
+    renderer_decision: AtomicU8,
     /// Core-reported nominal refresh rate, used for frame pacing.
     pub fps_bits: AtomicU64,
     /// Monotonic count of frames actually run by the emulation worker.
@@ -202,6 +205,7 @@ impl HostState {
             fast_forward: AtomicBool::new(false),
             hardware_available: AtomicBool::new(false),
             hardware_active: AtomicBool::new(false),
+            renderer_decision: AtomicU8::new(0),
             fps_bits: AtomicU64::new(60.0f64.to_bits()),
             emulated_frames: AtomicU64::new(0),
             base_width: AtomicU32::new(320),
@@ -227,6 +231,22 @@ impl HostState {
 
     pub fn hardware_active(&self) -> bool {
         self.hardware_active.load(Ordering::Relaxed)
+    }
+
+    pub fn renderer_decision(&self) -> Option<hardware::RendererDecision> {
+        match self.renderer_decision.load(Ordering::Relaxed) {
+            1 => Some(hardware::RendererDecision::OpenGl),
+            2 => Some(hardware::RendererDecision::Software),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn set_renderer_decision(&self, decision: hardware::RendererDecision) {
+        let value = match decision {
+            hardware::RendererDecision::OpenGl => 1,
+            hardware::RendererDecision::Software => 2,
+        };
+        self.renderer_decision.store(value, Ordering::Relaxed);
     }
 
     pub fn notify(&self, text: impl Into<String>, kind: MessageKind, ttl: Duration) {
@@ -450,13 +470,14 @@ impl HostState {
                 if data.is_null() {
                     return false;
                 }
-                let renderer = self
+                let requested = self
                     .options
                     .read()
                     .unwrap()
                     .current("swanstation_GPU_Renderer")
                     .unwrap_or_else(|| "Auto".to_string());
-                *(data as *mut c_uint) = if renderer == "Software" {
+                let decision = hardware::resolve_renderer(&requested, self);
+                *(data as *mut c_uint) = if decision == hardware::RendererDecision::Software {
                     ffi::RETRO_HW_CONTEXT_NONE
                 } else {
                     ffi::RETRO_HW_CONTEXT_OPENGL_CORE
@@ -546,17 +567,14 @@ impl HostState {
                 if data.is_null() {
                     return false;
                 }
-                let renderer = self
+                let requested = self
                     .options
                     .read()
                     .unwrap()
                     .current("swanstation_GPU_Renderer")
                     .unwrap_or_else(|| "Auto".to_string());
-                if renderer == "Software" {
-                    return false;
-                }
                 let callback = &mut *(data as *mut ffi::retro_hw_render_callback);
-                hardware::set_hw_render(callback, self)
+                hardware::set_hw_render(callback, self, &requested)
             }
             ffi::RETRO_ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER => false,
             ffi::RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE => {
@@ -819,6 +837,8 @@ pub extern "C" fn video_refresh(data: *const c_void, width: c_uint, height: c_ui
         return;
     }
     if let Some(host) = HOST.get() {
+        // Keep the FPS renderer suffix tied to the frame path actually used.
+        host.hardware_active.store(false, Ordering::Relaxed);
         unsafe { host.video.push(data, width, height, pitch) };
     }
 }

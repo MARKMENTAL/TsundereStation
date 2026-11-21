@@ -2,6 +2,7 @@ use crate::config::Config;
 use crate::emu::{Command, WorkerEvent, WorkerHandle};
 use crate::filebrowser::{BrowseKind, BrowseResult, FileBrowser};
 use crate::libretro::ffi;
+use crate::libretro::hardware::RendererDecision;
 use crate::libretro::host::{HostState, MessageKind};
 use crate::libretro::input::PORTS;
 use crate::libretro::loader::{state_path, CoreInfo};
@@ -1893,14 +1894,21 @@ impl App {
                                 .host
                                 .option_value("swanstation_GPU_Renderer")
                                 .unwrap_or_else(|| "Auto".to_string());
-                            let active = if selected == "Software" {
-                                "Software"
-                            } else if self.host.hardware_active() {
-                                "OpenGL (hardware)"
-                            } else if self.host.hardware_available() {
-                                "OpenGL ready (waiting for frame)"
-                            } else {
-                                "Software (OpenGL unavailable)"
+                            let active = match self.host.renderer_decision() {
+                                Some(RendererDecision::OpenGl) if self.host.hardware_active() => {
+                                    "OpenGL (hardware)"
+                                }
+                                Some(RendererDecision::OpenGl) => {
+                                    "OpenGL ready (waiting for frame)"
+                                }
+                                Some(RendererDecision::Software) if selected == "Software" => {
+                                    "Software"
+                                }
+                                Some(RendererDecision::Software) => {
+                                    "Software (OpenGL unavailable)"
+                                }
+                                None if selected == "Software" => "Software",
+                                None => "renderer not negotiated yet",
                             };
                             ui.weak(format!("Renderer: {active} · selected {selected}"));
                         }

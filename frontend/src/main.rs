@@ -167,6 +167,11 @@ fn run_selftest(
         "swanstation_GPU_Renderer".to_string(),
         if hardware { "OpenGL" } else { "Software" }.to_string(),
     );
+    // Hardware rendering must prepare EGL before any core/UI work, exactly
+    // like the normal worker startup path.
+    if hardware {
+        libretro::hardware::prepare_on_worker();
+    }
     let mut ch = libretro::loader::CoreHost::new(&core, host.clone(), &selftest_options)?;
     let info = ch.info().clone();
     println!("core: {} {}", info.name, info.version);
