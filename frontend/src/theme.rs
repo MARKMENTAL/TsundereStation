@@ -521,6 +521,42 @@ pub fn window_header(ui: &mut egui::Ui, title: &str, theme: &UiTheme) -> bool {
     close
 }
 
+pub fn page_header(ui: &mut egui::Ui, title: &str, theme: &UiTheme) -> bool {
+    let mut back = false;
+    egui::Frame::new()
+        .fill(theme.accent)
+        .inner_margin(Margin {
+            left: 18,
+            right: 14,
+            top: 8,
+            bottom: 8,
+        })
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(title)
+                        .size(28.0)
+                        .strong()
+                        .color(theme.on_accent),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let response = ui.add(
+                        egui::Button::new(
+                            egui::RichText::new("Back")
+                                .size(18.0)
+                                .color(theme.on_accent),
+                        )
+                        .fill(theme.accent)
+                        .stroke(egui::Stroke::new(1.0, theme.on_accent)),
+                    );
+                    back = response.clicked();
+                });
+            });
+        });
+    back
+}
+
 fn window_close_button(ui: &mut egui::Ui, theme: &UiTheme) -> bool {
     let (_, rect) = ui.allocate_space(egui::vec2(34.0, 34.0));
     let response = ui.interact(

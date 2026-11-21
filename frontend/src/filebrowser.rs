@@ -134,7 +134,7 @@ impl FileBrowser {
                 self.focus = (self.focus + 1) % self.entries.len();
                 self.update_selected_from_focus();
             }
-            NavAction::Left | NavAction::Right => {}
+            NavAction::Left | NavAction::Right | NavAction::PrevTab | NavAction::NextTab => {}
             NavAction::Confirm => {
                 let (path, _name, is_dir) = self.entries[self.focus].clone();
                 if is_dir {

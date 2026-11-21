@@ -8,6 +8,7 @@ use super::io::{
 };
 use crate::filebrowser::{BrowseKind, BrowseResult, FileBrowser};
 use crate::libretro::host::MessageKind;
+use crate::sdl_input::NavAction;
 use crate::theme::{self, UiTheme};
 use eframe::egui;
 use std::path::{Path, PathBuf};
@@ -37,6 +38,31 @@ enum LocalAction {
 enum SourceAction {
     CopyCard,
     ImportSave,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FocusPane {
+    Tabs,
+    Cards,
+    Saves,
+    Actions,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CardAction {
+    OpenFolder,
+    Refresh,
+    Scan,
+    DuckStation,
+    RetroArch,
+    OpenCard,
+    OpenSourceCard,
+    ImportSave,
+    UseAsImportSource,
+    DeleteSave,
+    ExportIcon,
+    ConvertGme,
+    CopyCard,
 }
 
 #[derive(Debug)]
@@ -116,7 +142,6 @@ impl CardRow {
 }
 
 pub struct MemoryCardManager {
-    pub open: bool,
     pub local_dir: PathBuf,
     pub source_dir: PathBuf,
     pub source_dir_text: String,
@@ -143,12 +168,14 @@ pub struct MemoryCardManager {
     file_browser: Option<FileBrowser>,
     browse_purpose: Option<BrowsePurpose>,
     pending: Option<(PendingAction, String)>,
+    focus_pane: FocusPane,
+    focus_index: usize,
+    confirm_focus: usize,
 }
 
 impl MemoryCardManager {
     pub fn new(local_dir: PathBuf, source_dir: PathBuf) -> Self {
         Self {
-            open: false,
             local_dir,
             source_dir_text: source_dir.display().to_string(),
             source_dir,
@@ -175,14 +202,19 @@ impl MemoryCardManager {
             file_browser: None,
             browse_purpose: None,
             pending: None,
+            focus_pane: FocusPane::Cards,
+            focus_index: 0,
+            confirm_focus: 0,
         }
     }
 
     pub fn open(&mut self) {
-        self.open = true;
         self.error = None;
         self.status = None;
         self.tab = Tab::Local;
+        self.focus_pane = FocusPane::Cards;
+        self.focus_index = 0;
+        self.confirm_focus = 0;
         if self.source_dir.as_os_str().is_empty() {
             let detected = default_source_dir();
             if !detected.as_os_str().is_empty() {
@@ -195,56 +227,366 @@ impl MemoryCardManager {
         self.refresh_source();
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, theme: &UiTheme) -> Option<(String, MessageKind)> {
-        if !self.open {
-            return None;
+    pub fn navigate(&mut self, nav: NavAction) -> bool {
+        if self.file_browser.is_some() {
+            self.navigate_file_browser(nav);
+            return false;
         }
-
-        let mut open = true;
-        let mut header_close = false;
-        let window_frame = theme::window_frame(&ctx.global_style(), theme);
-        egui::Window::new("Memory Card Manager")
-            .id(egui::Id::new("memory-card-manager"))
-            .open(&mut open)
-            .title_bar(false)
-            .frame(window_frame)
-            .resizable(true)
-            .default_width(1280.0)
-            .default_height(760.0)
-            .show(ctx, |ui| {
-                if theme::window_header(ui, "Memory Card Manager", theme) {
-                    header_close = true;
+        if self.pending.is_some() {
+            match nav {
+                NavAction::Left | NavAction::Right => {
+                    self.confirm_focus = 1 - self.confirm_focus.min(1);
                 }
-                theme::window_body(ui, |ui| {
-                    self.body(ui, ctx, theme);
-                });
-            });
-
-        if header_close {
-            open = false;
+                NavAction::Confirm => {
+                    let pending = self.pending.take();
+                    if self.confirm_focus == 1 {
+                        if let Some((action, _)) = pending {
+                            self.execute_pending(action);
+                        }
+                    }
+                }
+                NavAction::Cancel => self.pending = None,
+                NavAction::Up | NavAction::Down | NavAction::PrevTab | NavAction::NextTab => {}
+            }
+            return false;
         }
-        self.open = open;
+
+        if matches!(nav, NavAction::PrevTab | NavAction::NextTab) {
+            self.tab = match self.tab {
+                Tab::Local => Tab::Import,
+                Tab::Import => Tab::Local,
+            };
+            self.focus_index = 0;
+            return false;
+        }
+
+        let list_len = match self.tab {
+            Tab::Local => self.cards.len(),
+            Tab::Import => self.source_cards.len(),
+        };
+        let saves_len = match self.tab {
+            Tab::Local => self
+                .loaded
+                .as_ref()
+                .map(|card| card.summary.saves.len())
+                .unwrap_or(0),
+            Tab::Import => self
+                .source_loaded
+                .as_ref()
+                .map(|card| card.summary.saves.len())
+                .unwrap_or(0),
+        };
+        let actions_len = self.action_list().len();
+
+        match self.focus_pane {
+            FocusPane::Tabs => match nav {
+                NavAction::Left | NavAction::Right => {
+                    self.tab = match self.tab {
+                        Tab::Local => Tab::Import,
+                        Tab::Import => Tab::Local,
+                    };
+                    self.focus_index = 0;
+                }
+                NavAction::Down | NavAction::Confirm => {
+                    self.focus_pane = FocusPane::Cards;
+                    self.focus_index = 0;
+                }
+                NavAction::Cancel => return true,
+                NavAction::Up | NavAction::PrevTab | NavAction::NextTab => {}
+            },
+            FocusPane::Cards => match nav {
+                NavAction::Up => {
+                    if list_len > 0 {
+                        self.focus_index = (self.focus_index + list_len - 1) % list_len;
+                    }
+                }
+                NavAction::Down => {
+                    if list_len > 0 {
+                        self.focus_index = (self.focus_index + 1) % list_len;
+                    }
+                }
+                NavAction::Confirm => match self.tab {
+                    Tab::Local => self.select_local(self.focus_index),
+                    Tab::Import => self.select_source(self.focus_index),
+                },
+                NavAction::Right => {
+                    self.focus_pane = FocusPane::Saves;
+                    self.focus_index = 0;
+                }
+                NavAction::Left => {
+                    self.focus_pane = FocusPane::Tabs;
+                    self.focus_index = 0;
+                }
+                NavAction::Cancel => {
+                    self.focus_pane = FocusPane::Tabs;
+                    self.focus_index = 0;
+                }
+                NavAction::PrevTab | NavAction::NextTab => {}
+            },
+            FocusPane::Saves => match nav {
+                NavAction::Up => {
+                    if saves_len > 0 {
+                        self.focus_index = (self.focus_index + saves_len - 1) % saves_len;
+                    }
+                }
+                NavAction::Down => {
+                    if saves_len > 0 {
+                        self.focus_index = (self.focus_index + 1) % saves_len;
+                    }
+                }
+                NavAction::Confirm => {
+                    if self.tab == Tab::Local {
+                        self.selected_save = Some(self.focus_index);
+                        if let Some(save) = self
+                            .loaded
+                            .as_ref()
+                            .and_then(|card| card.summary.saves.get(self.focus_index))
+                        {
+                            self.icon_name = default_icon_name(save);
+                        }
+                    } else {
+                        self.source_save_selected = Some(self.focus_index);
+                    }
+                }
+                NavAction::Left => {
+                    self.focus_pane = FocusPane::Cards;
+                    self.focus_index = 0;
+                }
+                NavAction::Right => {
+                    self.focus_pane = FocusPane::Actions;
+                    self.focus_index = 0;
+                }
+                NavAction::Cancel => {
+                    self.focus_pane = FocusPane::Cards;
+                    self.focus_index = 0;
+                }
+                NavAction::PrevTab | NavAction::NextTab => {}
+            },
+            FocusPane::Actions => match nav {
+                NavAction::Up => {
+                    if actions_len > 0 {
+                        self.focus_index = (self.focus_index + actions_len - 1) % actions_len;
+                    }
+                }
+                NavAction::Down => {
+                    if actions_len > 0 {
+                        self.focus_index = (self.focus_index + 1) % actions_len;
+                    }
+                }
+                NavAction::Confirm => {
+                    if let Some(action) = self.action_list().get(self.focus_index).copied() {
+                        if self.action_enabled(action) {
+                            self.execute_card_action(action);
+                        }
+                    }
+                }
+                NavAction::Left => {
+                    self.focus_pane = FocusPane::Saves;
+                    self.focus_index = 0;
+                }
+                NavAction::Right => {
+                    self.focus_pane = FocusPane::Tabs;
+                    self.focus_index = 0;
+                }
+                NavAction::Cancel => {
+                    self.focus_pane = FocusPane::Saves;
+                    self.focus_index = 0;
+                }
+                NavAction::PrevTab | NavAction::NextTab => {}
+            },
+        }
+        false
+    }
+
+    fn action_list(&self) -> Vec<CardAction> {
+        let mut actions = vec![
+            CardAction::OpenFolder,
+            CardAction::Refresh,
+            CardAction::Scan,
+            CardAction::DuckStation,
+            CardAction::RetroArch,
+        ];
+        match self.tab {
+            Tab::Local => {
+                actions.push(CardAction::OpenCard);
+                if let Some(card) = &self.loaded {
+                    actions.push(CardAction::ImportSave);
+                    if card.format == CardFormat::Gme {
+                        actions.push(CardAction::UseAsImportSource);
+                    }
+                    actions.push(CardAction::DeleteSave);
+                    actions.push(CardAction::ExportIcon);
+                    if card.format == CardFormat::Gme {
+                        actions.push(CardAction::ConvertGme);
+                    }
+                }
+            }
+            Tab::Import => {
+                actions.push(CardAction::OpenSourceCard);
+                if self.source_loaded.is_some() {
+                    actions.push(CardAction::CopyCard);
+                    actions.push(CardAction::ImportSave);
+                }
+            }
+        }
+        actions
+    }
+
+    fn action_enabled(&self, action: CardAction) -> bool {
+        match action {
+            CardAction::OpenFolder
+            | CardAction::Refresh
+            | CardAction::Scan
+            | CardAction::DuckStation
+            | CardAction::RetroArch
+            | CardAction::OpenCard
+            | CardAction::OpenSourceCard => true,
+            CardAction::ImportSave => match self.tab {
+                Tab::Local => self
+                    .loaded
+                    .as_ref()
+                    .is_some_and(|card| card.format == CardFormat::Raw),
+                Tab::Import => {
+                    let selected_source_save = self
+                        .source_loaded
+                        .as_ref()
+                        .and_then(|card| {
+                            self.source_save_selected
+                                .and_then(|index| card.summary.saves.get(index))
+                        })
+                        .is_some();
+                    let target_is_raw = self
+                        .loaded
+                        .as_ref()
+                        .is_some_and(|target| target.format == CardFormat::Raw);
+                    selected_source_save && self.selected_card.is_some() && target_is_raw
+                }
+            },
+            CardAction::UseAsImportSource | CardAction::ConvertGme => self
+                .loaded
+                .as_ref()
+                .is_some_and(|card| card.format == CardFormat::Gme),
+            CardAction::DeleteSave => {
+                let has_save = self
+                    .loaded
+                    .as_ref()
+                    .and_then(|card| {
+                        self.selected_save
+                            .and_then(|index| card.summary.saves.get(index))
+                    })
+                    .is_some();
+                has_save
+                    && self
+                        .loaded
+                        .as_ref()
+                        .is_some_and(|card| card.format == CardFormat::Raw)
+            }
+            CardAction::ExportIcon => self
+                .loaded
+                .as_ref()
+                .and_then(|card| {
+                    self.selected_save
+                        .and_then(|index| card.summary.saves.get(index))
+                })
+                .is_some(),
+            CardAction::CopyCard => self.source_loaded.is_some(),
+        }
+    }
+
+    fn focused_action(&self) -> Option<CardAction> {
+        self.action_list().get(self.focus_index).copied()
+    }
+
+    fn focus_action(&mut self, action: CardAction) {
+        if let Some(index) = self.action_list().iter().position(|entry| *entry == action) {
+            self.focus_pane = FocusPane::Actions;
+            self.focus_index = index;
+        }
+    }
+
+    fn set_action_focus(&mut self, actions: &[CardAction], action: CardAction) {
+        if let Some(index) = actions.iter().position(|entry| *entry == action) {
+            self.focus_pane = FocusPane::Actions;
+            self.focus_index = index;
+        }
+    }
+
+    fn execute_card_action(&mut self, action: CardAction) {
+        match action {
+            CardAction::OpenFolder => {
+                let _ = std::process::Command::new("xdg-open")
+                    .arg(&self.local_dir)
+                    .spawn();
+            }
+            CardAction::Refresh => self.refresh_local(),
+            CardAction::Scan => self.refresh_source(),
+            CardAction::DuckStation => {
+                self.source_dir = duckstation_dir();
+                self.source_dir_text = self.source_dir.display().to_string();
+                self.source_dir_dirty = true;
+                self.refresh_source();
+            }
+            CardAction::RetroArch => {
+                self.source_dir = retroarch_dir();
+                self.source_dir_text = self.source_dir.display().to_string();
+                self.source_dir_dirty = true;
+                self.refresh_source();
+            }
+            CardAction::OpenCard => self.start_browse(BrowsePurpose::OpenLocal),
+            CardAction::OpenSourceCard => self.start_browse(BrowsePurpose::ImportSource),
+            CardAction::ImportSave => {
+                self.handle_local_action(LocalAction::ImportSourceBrowse);
+            }
+            CardAction::UseAsImportSource => {
+                self.handle_local_action(LocalAction::UseAsImportSource);
+            }
+            CardAction::DeleteSave => self.handle_local_action(LocalAction::Delete),
+            CardAction::ExportIcon => self.handle_local_action(LocalAction::ExportIcon),
+            CardAction::ConvertGme => self.handle_local_action(LocalAction::Convert),
+            CardAction::CopyCard => self.handle_source_action(SourceAction::CopyCard),
+        }
+    }
+
+    pub fn page(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        theme: &UiTheme,
+    ) -> (bool, Option<(String, MessageKind)>) {
+        let mut back = false;
+        egui::CentralPanel::default().show(ui, |ui| {
+            if theme::page_header(ui, "Memory Card Manager", theme) {
+                back = true;
+            }
+            theme::window_body(ui, |ui| {
+                self.body(ui, ctx, theme);
+            });
+        });
 
         self.poll_file_browser(ctx, theme);
-        self.show_confirm(ctx);
-        self.status.take()
+        self.show_confirm(ctx, theme);
+        (back, self.status.take())
     }
 
     fn body(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, theme: &UiTheme) {
         self.toolbar(ui, theme);
         ui.separator();
         ui.horizontal(|ui| {
-            if ui
-                .selectable_label(self.tab == Tab::Local, "Local cards")
-                .clicked()
-            {
+            let local_focused = self.focus_pane == FocusPane::Tabs && self.focus_index == 0;
+            let response = ui.selectable_label(self.tab == Tab::Local, "Local cards");
+            focus_ring(ui, response.rect, local_focused, theme);
+            if response.clicked() {
                 self.tab = Tab::Local;
+                self.focus_pane = FocusPane::Tabs;
+                self.focus_index = 0;
             }
-            if ui
-                .selectable_label(self.tab == Tab::Import, "Import & copy")
-                .clicked()
-            {
+            let import_focused = self.focus_pane == FocusPane::Tabs && self.focus_index == 1;
+            let response = ui.selectable_label(self.tab == Tab::Import, "Import & copy");
+            focus_ring(ui, response.rect, import_focused, theme);
+            if response.clicked() {
                 self.tab = Tab::Import;
+                self.focus_pane = FocusPane::Tabs;
+                self.focus_index = 1;
             }
         });
         ui.separator();
@@ -260,22 +602,41 @@ impl MemoryCardManager {
         }
     }
 
-    fn toolbar(&mut self, ui: &mut egui::Ui, _theme: &UiTheme) {
+    fn toolbar(&mut self, ui: &mut egui::Ui, theme: &UiTheme) {
         let mut open_folder = false;
         let mut refresh_local = false;
         let mut source_changed = false;
         let mut scan_source = false;
         let mut use_duckstation = false;
         let mut use_retroarch = false;
+        let focused_action = self.focused_action();
 
         ui.horizontal(|ui| {
             ui.label("Local cards:");
             ui.monospace(self.local_dir.display().to_string());
-            if ui.button("Open folder").clicked() {
+            let response = ui.button("Open folder");
+            action_focus(
+                ui,
+                &response,
+                self.focus_pane == FocusPane::Actions
+                    && focused_action == Some(CardAction::OpenFolder),
+                theme,
+            );
+            if response.clicked() {
                 open_folder = true;
+                self.focus_action(CardAction::OpenFolder);
             }
-            if ui.button("Refresh").clicked() {
+            let response = ui.button("Refresh");
+            action_focus(
+                ui,
+                &response,
+                self.focus_pane == FocusPane::Actions
+                    && focused_action == Some(CardAction::Refresh),
+                theme,
+            );
+            if response.clicked() {
                 refresh_local = true;
+                self.focus_action(CardAction::Refresh);
             }
         });
         ui.horizontal(|ui| {
@@ -290,14 +651,40 @@ impl MemoryCardManager {
             {
                 source_changed = true;
             }
-            if ui.button("Scan").clicked() {
+            let response = ui.button("Scan");
+            focus_ring(
+                ui,
+                response.rect,
+                self.focus_pane == FocusPane::Actions && focused_action == Some(CardAction::Scan),
+                theme,
+            );
+            if response.clicked() {
                 scan_source = true;
+                self.focus_action(CardAction::Scan);
             }
-            if ui.button("DuckStation").clicked() {
+            let response = ui.button("DuckStation");
+            action_focus(
+                ui,
+                &response,
+                self.focus_pane == FocusPane::Actions
+                    && focused_action == Some(CardAction::DuckStation),
+                theme,
+            );
+            if response.clicked() {
                 use_duckstation = true;
+                self.focus_action(CardAction::DuckStation);
             }
-            if ui.button("RetroArch").clicked() {
+            let response = ui.button("RetroArch");
+            action_focus(
+                ui,
+                &response,
+                self.focus_pane == FocusPane::Actions
+                    && focused_action == Some(CardAction::RetroArch),
+                theme,
+            );
+            if response.clicked() {
                 use_retroarch = true;
+                self.focus_action(CardAction::RetroArch);
             }
         });
 
@@ -346,7 +733,7 @@ impl MemoryCardManager {
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.set_width(400.0);
-                self.local_card_list(ui);
+                self.local_card_list(ui, theme);
             });
             ui.separator();
             ui.vertical(|ui| {
@@ -361,10 +748,19 @@ impl MemoryCardManager {
         });
     }
 
-    fn local_card_list(&mut self, ui: &mut egui::Ui) {
+    fn local_card_list(&mut self, ui: &mut egui::Ui, theme: &UiTheme) {
         ui.heading("Cards");
-        if ui.button("Open card…").clicked() {
+        let focused_action = self.focused_action();
+        let response = ui.button("Open card…");
+        focus_ring(
+            ui,
+            response.rect,
+            self.focus_pane == FocusPane::Actions && focused_action == Some(CardAction::OpenCard),
+            theme,
+        );
+        if response.clicked() {
             self.start_browse(BrowsePurpose::OpenLocal);
+            self.focus_action(CardAction::OpenCard);
         }
         let rows: Vec<(usize, String, bool)> = self
             .cards
@@ -377,8 +773,16 @@ impl MemoryCardManager {
             .max_height((ui.available_height() - 50.0).max(220.0))
             .show(ui, |ui| {
                 for (index, label, selected) in rows {
-                    if ui.selectable_label(selected, label).clicked() {
+                    let focused = self.focus_pane == FocusPane::Cards && self.focus_index == index;
+                    let response = ui.selectable_label(selected, label);
+                    focus_ring(ui, response.rect, focused, theme);
+                    if focused {
+                        response.scroll_to_me(Some(egui::Align::Center));
+                    }
+                    if response.clicked() {
                         self.select_local(index);
+                        self.focus_pane = FocusPane::Cards;
+                        self.focus_index = index;
                     }
                 }
                 if self.cards.is_empty() {
@@ -388,6 +792,8 @@ impl MemoryCardManager {
     }
 
     fn local_details(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, theme: &UiTheme) {
+        let action_list = self.action_list();
+        let focused_action = action_list.get(self.focus_index).copied();
         let loaded = self.loaded.take();
         let mut action = None;
 
@@ -420,14 +826,19 @@ impl MemoryCardManager {
                     save.blocks,
                     if save.deleted { "  (deleted)" } else { "" }
                 );
-                if ui
-                    .selectable_label(
-                        self.selected_save == Some(index),
-                        egui::RichText::new(label).monospace(),
-                    )
-                    .clicked()
-                {
+                let focused = self.focus_pane == FocusPane::Saves && self.focus_index == index;
+                let response = ui.selectable_label(
+                    self.selected_save == Some(index),
+                    egui::RichText::new(label).monospace(),
+                );
+                focus_ring(ui, response.rect, focused, theme);
+                if focused {
+                    response.scroll_to_me(Some(egui::Align::Center));
+                }
+                if response.clicked() {
                     new_save = Some(index);
+                    self.focus_pane = FocusPane::Saves;
+                    self.focus_index = index;
                 }
             }
             if card.summary.saves.is_empty() {
@@ -470,26 +881,55 @@ impl MemoryCardManager {
             let is_raw = card.format == CardFormat::Raw;
 
             ui.horizontal_wrapped(|ui| {
-                if ui
-                    .add_enabled(is_raw, egui::Button::new("Import save…"))
-                    .clicked()
-                {
+                let response = ui.add_enabled(is_raw, egui::Button::new("Import save…"));
+                action_focus(
+                    ui,
+                    &response,
+                    self.focus_pane == FocusPane::Actions
+                        && focused_action == Some(CardAction::ImportSave),
+                    theme,
+                );
+                if response.clicked() {
                     action = Some(LocalAction::ImportSourceBrowse);
+                    self.set_action_focus(&action_list, CardAction::ImportSave);
                 }
-                if card.format == CardFormat::Gme && ui.button("Use as import source").clicked() {
-                    action = Some(LocalAction::UseAsImportSource);
+                if card.format == CardFormat::Gme {
+                    let response = ui.button("Use as import source");
+                    action_focus(
+                        ui,
+                        &response,
+                        self.focus_pane == FocusPane::Actions
+                            && focused_action == Some(CardAction::UseAsImportSource),
+                        theme,
+                    );
+                    if response.clicked() {
+                        action = Some(LocalAction::UseAsImportSource);
+                        self.set_action_focus(&action_list, CardAction::UseAsImportSource);
+                    }
                 }
-                if ui
-                    .add_enabled(has_save && is_raw, egui::Button::new("Delete save"))
-                    .clicked()
-                {
+                let response = ui.add_enabled(has_save && is_raw, egui::Button::new("Delete save"));
+                action_focus(
+                    ui,
+                    &response,
+                    self.focus_pane == FocusPane::Actions
+                        && focused_action == Some(CardAction::DeleteSave),
+                    theme,
+                );
+                if response.clicked() {
                     action = Some(LocalAction::Delete);
+                    self.set_action_focus(&action_list, CardAction::DeleteSave);
                 }
-                if ui
-                    .add_enabled(has_save, egui::Button::new("Export icon"))
-                    .clicked()
-                {
+                let response = ui.add_enabled(has_save, egui::Button::new("Export icon"));
+                action_focus(
+                    ui,
+                    &response,
+                    self.focus_pane == FocusPane::Actions
+                        && focused_action == Some(CardAction::ExportIcon),
+                    theme,
+                );
+                if response.clicked() {
                     action = Some(LocalAction::ExportIcon);
+                    self.set_action_focus(&action_list, CardAction::ExportIcon);
                 }
             });
 
@@ -503,8 +943,17 @@ impl MemoryCardManager {
                             .desired_width(340.0)
                             .hint_text("name.srm or name.mcd"),
                     );
-                    if ui.button("Convert .gme").clicked() {
+                    let response = ui.button("Convert .gme");
+                    action_focus(
+                        ui,
+                        &response,
+                        self.focus_pane == FocusPane::Actions
+                            && focused_action == Some(CardAction::ConvertGme),
+                        theme,
+                    );
+                    if response.clicked() {
                         action = Some(LocalAction::Convert);
+                        self.set_action_focus(&action_list, CardAction::ConvertGme);
                     }
                 });
                 ui.weak(
@@ -574,7 +1023,7 @@ impl MemoryCardManager {
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.set_width(430.0);
-                self.source_card_list(ui);
+                self.source_card_list(ui, theme);
             });
             ui.separator();
             ui.vertical(|ui| {
@@ -589,10 +1038,20 @@ impl MemoryCardManager {
         });
     }
 
-    fn source_card_list(&mut self, ui: &mut egui::Ui) {
+    fn source_card_list(&mut self, ui: &mut egui::Ui, theme: &UiTheme) {
         ui.heading("Source cards");
-        if ui.button("Open source card…").clicked() {
+        let focused_action = self.focused_action();
+        let response = ui.button("Open source card…");
+        action_focus(
+            ui,
+            &response,
+            self.focus_pane == FocusPane::Actions
+                && focused_action == Some(CardAction::OpenSourceCard),
+            theme,
+        );
+        if response.clicked() {
             self.start_browse(BrowsePurpose::ImportSource);
+            self.focus_action(CardAction::OpenSourceCard);
         }
         let rows: Vec<(usize, String, bool)> = self
             .source_cards
@@ -605,8 +1064,16 @@ impl MemoryCardManager {
             .max_height((ui.available_height() - 50.0).max(220.0))
             .show(ui, |ui| {
                 for (index, label, selected) in rows {
-                    if ui.selectable_label(selected, label).clicked() {
+                    let focused = self.focus_pane == FocusPane::Cards && self.focus_index == index;
+                    let response = ui.selectable_label(selected, label);
+                    focus_ring(ui, response.rect, focused, theme);
+                    if focused {
+                        response.scroll_to_me(Some(egui::Align::Center));
+                    }
+                    if response.clicked() {
                         self.select_source(index);
+                        self.focus_pane = FocusPane::Cards;
+                        self.focus_index = index;
                     }
                 }
                 if self.source_cards.is_empty() {
@@ -616,6 +1083,8 @@ impl MemoryCardManager {
     }
 
     fn source_details(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, theme: &UiTheme) {
+        let action_list = self.action_list();
+        let focused_action = action_list.get(self.focus_index).copied();
         let source = self.source_loaded.take();
         let mut action = None;
 
@@ -651,15 +1120,21 @@ impl MemoryCardManager {
                         .desired_width(340.0)
                         .hint_text("Game (USA).srm"),
                 );
-                if ui
-                    .button(if card.format == CardFormat::Gme {
-                        "Convert & copy"
-                    } else {
-                        "Copy card"
-                    })
-                    .clicked()
-                {
+                let response = ui.button(if card.format == CardFormat::Gme {
+                    "Convert & copy"
+                } else {
+                    "Copy card"
+                });
+                action_focus(
+                    ui,
+                    &response,
+                    self.focus_pane == FocusPane::Actions
+                        && focused_action == Some(CardAction::CopyCard),
+                    theme,
+                );
+                if response.clicked() {
                     action = Some(SourceAction::CopyCard);
+                    self.set_action_focus(&action_list, CardAction::CopyCard);
                 }
             });
             if is_multi_disc(&self.copy_name) {
@@ -680,14 +1155,19 @@ impl MemoryCardManager {
                     save.blocks,
                     if save.deleted { "  (deleted)" } else { "" }
                 );
-                if ui
-                    .selectable_label(
-                        self.source_save_selected == Some(index),
-                        egui::RichText::new(label).monospace(),
-                    )
-                    .clicked()
-                {
+                let focused = self.focus_pane == FocusPane::Saves && self.focus_index == index;
+                let response = ui.selectable_label(
+                    self.source_save_selected == Some(index),
+                    egui::RichText::new(label).monospace(),
+                );
+                focus_ring(ui, response.rect, focused, theme);
+                if focused {
+                    response.scroll_to_me(Some(egui::Align::Center));
+                }
+                if response.clicked() {
                     new_save = Some(index);
+                    self.focus_pane = FocusPane::Saves;
+                    self.focus_index = index;
                 }
             }
             if card.summary.saves.is_empty() {
@@ -723,14 +1203,20 @@ impl MemoryCardManager {
                 .as_ref()
                 .is_some_and(|target| target.format == CardFormat::Raw);
             ui.label(format!("Import target: {target_name}"));
-            if ui
-                .add_enabled(
-                    selected_save.is_some() && self.selected_card.is_some() && target_is_raw,
-                    egui::Button::new("Import selected save"),
-                )
-                .clicked()
-            {
+            let response = ui.add_enabled(
+                selected_save.is_some() && self.selected_card.is_some() && target_is_raw,
+                egui::Button::new("Import selected save"),
+            );
+            action_focus(
+                ui,
+                &response,
+                self.focus_pane == FocusPane::Actions
+                    && focused_action == Some(CardAction::ImportSave),
+                theme,
+            );
+            if response.clicked() {
                 action = Some(SourceAction::ImportSave);
+                self.set_action_focus(&action_list, CardAction::ImportSave);
             }
             if target_is_raw {
                 ui.weak("Change the target on the Local cards tab.");
@@ -917,14 +1403,19 @@ impl MemoryCardManager {
         self.browse_purpose = Some(purpose);
     }
 
-    fn poll_file_browser(&mut self, ctx: &egui::Context, theme: &UiTheme) {
-        let Some(mut browser) = self.file_browser.take() else {
+    fn navigate_file_browser(&mut self, nav: NavAction) {
+        let Some(browser) = self.file_browser.as_mut() else {
             return;
         };
-        match browser.show(ctx, theme) {
-            BrowseResult::None => {
-                self.file_browser = Some(browser);
-            }
+        if let Some(result) = browser.navigate(nav) {
+            self.file_browser = None;
+            self.apply_browse_result(result);
+        }
+    }
+
+    fn apply_browse_result(&mut self, result: BrowseResult) {
+        match result {
+            BrowseResult::None => {}
             BrowseResult::Cancelled => {
                 self.browse_purpose = None;
             }
@@ -936,6 +1427,16 @@ impl MemoryCardManager {
                     None => {}
                 }
             }
+        }
+    }
+
+    fn poll_file_browser(&mut self, ctx: &egui::Context, theme: &UiTheme) {
+        let Some(mut browser) = self.file_browser.take() else {
+            return;
+        };
+        match browser.show(ctx, theme) {
+            BrowseResult::None => self.file_browser = Some(browser),
+            result => self.apply_browse_result(result),
         }
     }
 
@@ -1315,11 +1816,12 @@ impl MemoryCardManager {
         }
     }
 
-    fn show_confirm(&mut self, ctx: &egui::Context) {
+    fn show_confirm(&mut self, ctx: &egui::Context, theme: &UiTheme) {
         let Some((action, message)) = self.pending.take() else {
             return;
         };
         let mut decision = None;
+        let confirm_focus = self.confirm_focus;
         egui::Modal::new(egui::Id::new("memory-card-confirm")).show(ctx, |ui| {
             ui.set_min_width(560.0);
             ui.heading("Confirm memory-card change");
@@ -1327,11 +1829,17 @@ impl MemoryCardManager {
             ui.label(&message);
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if ui.button("Cancel").clicked() {
+                let response = ui.button("Cancel");
+                focus_ring(ui, response.rect, confirm_focus == 0, theme);
+                if response.clicked() {
                     decision = Some(false);
+                    self.confirm_focus = 0;
                 }
-                if ui.button("Continue").clicked() {
+                let response = ui.button("Continue");
+                focus_ring(ui, response.rect, confirm_focus == 1, theme);
+                if response.clicked() {
                     decision = Some(true);
+                    self.confirm_focus = 1;
                 }
             });
         });
@@ -1377,6 +1885,24 @@ impl MemoryCardManager {
                 egui::TextureOptions::NEAREST,
             ));
         }
+    }
+}
+
+fn focus_ring(ui: &egui::Ui, rect: egui::Rect, focused: bool, theme: &UiTheme) {
+    if focused {
+        ui.painter().rect_stroke(
+            rect.expand(2.0),
+            egui::CornerRadius::same(7),
+            egui::Stroke::new(2.0, theme.accent),
+            egui::StrokeKind::Outside,
+        );
+    }
+}
+
+fn action_focus(ui: &egui::Ui, response: &egui::Response, focused: bool, theme: &UiTheme) {
+    focus_ring(ui, response.rect, focused, theme);
+    if focused {
+        response.scroll_to_me(Some(egui::Align::Center));
     }
 }
 
@@ -1429,4 +1955,44 @@ fn format_size(bytes: usize) -> String {
         unit += 1;
     }
     format!("{value:.1} {}", UNITS[unit])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn controller_navigation_cycles_window_panes() {
+        let mut manager = MemoryCardManager::new(
+            PathBuf::from("/tmp/tsundere-cards"),
+            PathBuf::from("/tmp/tsundere-import"),
+        );
+        assert_eq!(manager.focus_pane, FocusPane::Cards);
+
+        manager.navigate(NavAction::Right);
+        assert_eq!(manager.focus_pane, FocusPane::Saves);
+        manager.navigate(NavAction::Right);
+        assert_eq!(manager.focus_pane, FocusPane::Actions);
+        manager.navigate(NavAction::Right);
+        assert_eq!(manager.focus_pane, FocusPane::Tabs);
+
+        manager.navigate(NavAction::Down);
+        assert_eq!(manager.focus_pane, FocusPane::Cards);
+        manager.navigate(NavAction::Left);
+        assert_eq!(manager.focus_pane, FocusPane::Tabs);
+        assert!(manager.navigate(NavAction::Cancel));
+    }
+
+    #[test]
+    fn shoulder_tabs_switch_local_and_import() {
+        let mut manager = MemoryCardManager::new(
+            PathBuf::from("/tmp/tsundere-cards"),
+            PathBuf::from("/tmp/tsundere-import"),
+        );
+        assert_eq!(manager.tab, Tab::Local);
+        manager.navigate(NavAction::NextTab);
+        assert_eq!(manager.tab, Tab::Import);
+        manager.navigate(NavAction::PrevTab);
+        assert_eq!(manager.tab, Tab::Local);
+    }
 }

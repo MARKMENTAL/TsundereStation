@@ -392,16 +392,21 @@ image on boot.
 
 ## Controls
 
-The launcher, file browser and in-game pause menu are designed for TV use with
-large rows and controller navigation. Settings and Controller windows use the
-mouse/keyboard for now.
+The launcher, file browser, in-game pause menu, Settings and Memory Card Manager
+support controller navigation. The Controller page is deliberately mouse/keyboard
+only so controller buttons can be tested without moving focus or closing it.
+Text entry remains keyboard/mouse: the Settings search field, import/source
+directories, and card/icon filenames.
 
 Controller navigation:
 
 - Launcher: D-pad/left stick moves, Cross selects, Left/Right changes the highlighted player’s controller
 - File browser: D-pad/left stick moves, Cross opens/chooses, Circle closes
 - In the pause menu: D-pad/left stick moves, Cross selects, Circle/PS closes
-- Keyboard equivalents: arrow keys move, `Enter` selects, `Esc` closes
+- Settings: D-pad/left stick moves through categories and options, Right/Cross enters the content pane, Left/Right changes values, Circle backs out or closes
+- Memory Card Manager: D-pad/left stick moves through tabs, card/save lists and actions, LB/RB switches Local/Import, Cross selects, Circle backs out or closes
+- Controller page: controller input is ignored; use the Back button with mouse or keyboard
+- Keyboard equivalents: arrow keys move, `Enter` selects, `Esc` closes, PageUp/PageDown switch Memory Card tabs
 - Player 1 drives the launcher and menus. Player 2 is game-only and does not navigate the UI.
 
 Two-player setup:
@@ -409,7 +414,7 @@ Two-player setup:
 - The launcher has separate **Player 1 controller** and **Player 2 controller**
   rows. Highlight a row and press Left/Right to cycle controllers; Player 2 also
   has a **None** option.
-- The Controller window exposes both player assignments and the SwanStation
+- The Controller page exposes both player assignments and the SwanStation
   controller type for port 1 and port 2.
 - Player 2 is opt-in. SwanStation port 2 is enabled only while a Player 2
   controller is assigned. Clearing it sends `RETRO_DEVICE_NONE`, so games do not
@@ -457,7 +462,7 @@ permissions.
 
 ## Rendering
 
-Settings → Enhancement → **GPU Renderer** offers:
+Settings → Graphics → **GPU Renderer** offers:
 
 - **Auto** — use OpenGL hardware rendering when a headless EGL context can be
   created, otherwise fall back to the software renderer.
@@ -528,7 +533,7 @@ core next to the executable, in the current directory, in
 - Rewind, runahead and cheats are not exposed yet.
 - Core options mostly apply on the next frame. When no game is running, changing
   an option automatically reinitializes the core so boot-time options apply to
-  the next start. While a game is running, use the Settings window's “Restart
+  the next start. While a game is running, use the Settings page's “Restart
   core” button (the current game is reloaded automatically).
 - Audio output uses SDL's default device at 44.1 kHz. If no compatible device is
   available the frontend still runs, silently.
@@ -545,9 +550,9 @@ core next to the executable, in the current directory, in
   rumble, menu navigation and the shared SDL audio callback (including the
   splash motif).
 - `src/splash.rs`: embedded logo and motif decoding, branding helpers.
-- `src/app.rs`: splash, launcher, in-game overlay, settings and controller windows.
-- `src/theme.rs`: theme catalog, palette derivation, contrast rules, theme picker
-  and custom window headers.
+- `src/app.rs`: splash, launcher, game view, pause overlay, and the full-screen Settings, Controller and Memory Card pages.
+- `src/theme.rs`: theme catalog, palette derivation, contrast rules, theme picker,
+  page headers and custom dialog window headers.
 - `src/tv_ui.rs`: large full-width TV rows and controller hints.
 - `src/config.rs`: config schema, XDG paths, legacy migration and core discovery.
 - `src/memory_card/`: vendored JAPS1ME card engine and the Memory Card Manager UI.

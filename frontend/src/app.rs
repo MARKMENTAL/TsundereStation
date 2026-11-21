@@ -23,13 +23,46 @@ enum Screen {
     Splash,
     Launcher,
     Game,
+    Settings,
+    Controller,
+    MemoryCard,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NavContext {
     FileBrowser,
+    MemoryCard,
+    Settings,
     Overlay,
     Launcher,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SettingsPane {
+    Sidebar,
+    Content,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShaderSliderControl {
+    Bloom,
+    Scanlines,
+    Curvature,
+    Mask,
+    Vignette,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SettingsEntry {
+    ResetAll,
+    RestartCore,
+    ReloadThemes,
+    Theme(String),
+    Option(String),
+    OptionReset(String),
+    ShaderPreset,
+    ShaderSlider(ShaderSliderControl),
+    ShaderReset,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -145,6 +178,7 @@ pub struct App {
     sdl: SdlState,
 
     screen: Screen,
+    screen_stack: Vec<Screen>,
     launcher_focus: usize,
     game_path: Option<String>,
     game_title: String,
@@ -159,10 +193,11 @@ pub struct App {
     disc_index: usize,
     swap_disc_open: bool,
     swap_disc_focus: usize,
-    settings_open: bool,
     settings_category: String,
     settings_search: String,
-    controller_open: bool,
+    settings_pane: SettingsPane,
+    settings_sidebar_focus: usize,
+    settings_content_focus: usize,
     memory_card: MemoryCardManager,
     quick_slot: u32,
     fps: FpsMeter,
@@ -273,6 +308,7 @@ impl App {
             } else {
                 Screen::Launcher
             },
+            screen_stack: Vec::new(),
             launcher_focus: 0,
             game_path: None,
             game_title: String::new(),
@@ -286,10 +322,11 @@ impl App {
             disc_index: 0,
             swap_disc_open: false,
             swap_disc_focus: 0,
-            settings_open: false,
             settings_category: String::new(),
             settings_search: String::new(),
-            controller_open: false,
+            settings_pane: SettingsPane::Sidebar,
+            settings_sidebar_focus: 0,
+            settings_content_focus: 0,
             memory_card,
             quick_slot: 0,
             fps: FpsMeter::default(),
@@ -347,6 +384,7 @@ impl App {
                     self.loading_game = false;
                     self.last_error = None;
                     self.screen = Screen::Game;
+                    self.screen_stack.clear();
                     self.fps.reset();
                     self.apply_player2_port();
                     self.overlay_open = false;
@@ -374,9 +412,7 @@ impl App {
                     self.overlay_open = false;
                     self.paused = false;
                     self.paused_by_overlay = false;
-                    self.settings_open = false;
-                    self.controller_open = false;
-                    self.memory_card.open = false;
+                    self.screen_stack.clear();
                     self.disc_labels.clear();
                     self.disc_index = 0;
                     self.swap_disc_open = false;
@@ -713,17 +749,16 @@ impl App {
             let _ = self.config.save();
         }
         self.sync_player2_port();
-        if menu && self.screen == Screen::Game {
-            if self.settings_open {
-                self.settings_open = false;
-            } else if self.controller_open {
-                self.controller_open = false;
-            } else {
-                self.toggle_overlay();
+        if menu {
+            match self.screen {
+                Screen::Settings | Screen::MemoryCard => self.back_page(),
+                Screen::Controller => {}
+                Screen::Game => self.toggle_overlay(),
+                _ => {}
             }
         }
 
-        if self.overlay_open && !self.paused && !self.settings_open && !self.controller_open {
+        if self.overlay_open && !self.paused && self.screen == Screen::Game {
             // When the game keeps running behind the menu, do not let menu
             // navigation leak into either emulated pad. While paused we leave
             // the snapshots live so the diagnostics can show them.
@@ -731,16 +766,24 @@ impl App {
         }
         let nav_context = if self.file_browser.is_some() {
             Some(NavContext::FileBrowser)
-        } else if self.overlay_open && !self.settings_open && !self.controller_open {
-            Some(NavContext::Overlay)
-        } else if self.screen == Screen::Launcher && !self.settings_open && !self.controller_open {
-            Some(NavContext::Launcher)
         } else {
-            None
+            match self.screen {
+                Screen::Settings => Some(NavContext::Settings),
+                Screen::MemoryCard => Some(NavContext::MemoryCard),
+                Screen::Game if self.overlay_open => Some(NavContext::Overlay),
+                Screen::Launcher => Some(NavContext::Launcher),
+                _ => None,
+            }
         };
         for nav in self.sdl.poll_menu_nav(nav_context.is_some()) {
             match nav_context {
                 Some(NavContext::FileBrowser) => self.handle_file_browser_nav(nav),
+                Some(NavContext::MemoryCard) => {
+                    if self.memory_card.navigate(nav) {
+                        self.back_page();
+                    }
+                }
+                Some(NavContext::Settings) => self.handle_settings_nav(nav, ctx),
                 Some(NavContext::Overlay) => self.handle_overlay_nav(nav, ctx),
                 Some(NavContext::Launcher) => self.handle_launcher_nav(nav, ctx),
                 None => {}
@@ -755,14 +798,41 @@ impl App {
             }
             return;
         }
-        if self.screen == Screen::Launcher
-            && !self.settings_open
-            && !self.controller_open
-            && !ctx.egui_wants_keyboard_input()
-        {
-            if let Some(nav) = key_to_nav(ctx) {
-                self.handle_launcher_nav(nav, ctx);
+        match self.screen {
+            Screen::MemoryCard => {
+                if !ctx.egui_wants_keyboard_input() {
+                    if let Some(nav) = key_to_nav(ctx) {
+                        if self.memory_card.navigate(nav) {
+                            self.back_page();
+                            consume_escape(ctx);
+                        }
+                    }
+                }
             }
+            Screen::Settings => {
+                if !ctx.egui_wants_keyboard_input() {
+                    if let Some(nav) = key_to_nav(ctx) {
+                        self.handle_settings_nav(nav, ctx);
+                    }
+                    if self.screen != Screen::Settings {
+                        consume_escape(ctx);
+                    }
+                }
+            }
+            Screen::Controller => {
+                if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    self.back_page();
+                    consume_escape(ctx);
+                }
+            }
+            Screen::Launcher => {
+                if !ctx.egui_wants_keyboard_input() {
+                    if let Some(nav) = key_to_nav(ctx) {
+                        self.handle_launcher_nav(nav, ctx);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -848,7 +918,7 @@ impl App {
                 }
                 NavAction::Confirm => self.request_swap_disc(self.swap_disc_focus),
                 NavAction::Cancel => self.swap_disc_open = false,
-                NavAction::Left | NavAction::Right => {}
+                NavAction::Left | NavAction::Right | NavAction::PrevTab | NavAction::NextTab => {}
             }
             return;
         }
@@ -874,6 +944,7 @@ impl App {
                 self.quick_slot = (self.quick_slot + 1) % 10;
             }
             NavAction::Cancel => self.close_overlay(),
+            NavAction::PrevTab | NavAction::NextTab => {}
             NavAction::Confirm => {
                 let action = actions[self.menu_selection].0;
                 self.activate_overlay_action(action, ctx);
@@ -892,8 +963,8 @@ impl App {
             OverlayAction::LoadState => self.worker.send(Command::LoadState(self.quick_slot)),
             OverlayAction::TakeScreenshot => self.take_screenshot(),
             OverlayAction::SwapDisc => self.open_swap_disc_picker(),
-            OverlayAction::Settings => self.settings_open = true,
-            OverlayAction::Controller => self.controller_open = true,
+            OverlayAction::Settings => self.open_settings(),
+            OverlayAction::Controller => self.open_controller(),
             OverlayAction::ToggleFullscreen => self.toggle_fullscreen(ctx),
             OverlayAction::ToggleFps => self.toggle_fps_display(true),
             OverlayAction::QuitToLauncher => self.quit_to_launcher(),
@@ -1056,10 +1127,7 @@ impl App {
         // Game hotkeys are disabled while one of the frontend's text-entry
         // windows is open. Selectable labels can take focus too, so don't use
         // egui_wants_keyboard_input() here.
-        let typing = self.settings_open
-            || self.controller_open
-            || self.file_browser.is_some()
-            || self.memory_card.open;
+        let typing = self.file_browser.is_some();
         if !typing {
             if ctx.input(|i| i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::F1)) {
                 if self.swap_disc_open {
@@ -1083,7 +1151,7 @@ impl App {
             if ctx.input(|i| i.key_pressed(egui::Key::F12)) {
                 self.take_screenshot();
             }
-            if self.overlay_open && !self.settings_open && !self.controller_open {
+            if self.overlay_open {
                 if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
                     self.handle_overlay_nav(NavAction::Up, ctx);
                 }
@@ -1101,11 +1169,7 @@ impl App {
                 }
             }
         }
-        let fast = !self.overlay_open
-            && !self.settings_open
-            && !self.controller_open
-            && !typing
-            && ctx.input(|i| i.key_down(egui::Key::Tab));
+        let fast = !self.overlay_open && !typing && ctx.input(|i| i.key_down(egui::Key::Tab));
         self.host
             .fast_forward
             .store(fast, std::sync::atomic::Ordering::Relaxed);
@@ -1146,8 +1210,6 @@ impl App {
             return;
         }
         self.overlay_open = false;
-        self.settings_open = false;
-        self.controller_open = false;
         self.swap_disc_open = false;
 
         if self.screen == Screen::Game {
@@ -1222,10 +1284,9 @@ impl App {
             .fast_forward
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.screen = Screen::Launcher;
+        self.screen_stack.clear();
         self.launcher_focus = 0;
         self.overlay_open = false;
-        self.settings_open = false;
-        self.controller_open = false;
         self.paused = false;
         self.paused_by_overlay = false;
         self.loading_game = false;
@@ -1336,7 +1397,43 @@ impl App {
         }
     }
 
+    fn open_page(&mut self, screen: Screen) {
+        if self.screen == screen {
+            return;
+        }
+        self.screen_stack.push(self.screen);
+        self.screen = screen;
+    }
+
+    fn back_page(&mut self) {
+        self.screen = self.screen_stack.pop().unwrap_or(Screen::Launcher);
+    }
+
+    fn open_settings(&mut self) {
+        self.settings_pane = SettingsPane::Sidebar;
+        self.settings_sidebar_focus = self
+            .settings_categories()
+            .iter()
+            .position(|(key, _)| key == &self.settings_category)
+            .unwrap_or(0);
+        self.settings_content_focus = 0;
+        self.open_page(Screen::Settings);
+    }
+
+    fn open_controller(&mut self) {
+        self.open_page(Screen::Controller);
+    }
+
+    fn open_memory_card(&mut self) {
+        self.memory_card.open();
+        self.open_page(Screen::MemoryCard);
+    }
+
     fn cycle_controller(&mut self, player: usize) {
+        self.cycle_controller_dir(player, 1);
+    }
+
+    fn cycle_controller_dir(&mut self, player: usize, delta: i32) {
         if player >= PORTS {
             return;
         }
@@ -1369,8 +1466,8 @@ impl App {
         let current = choices
             .iter()
             .position(|choice| choice.as_ref().map(|entry| entry.instance_id) == current_instance)
-            .unwrap_or(0);
-        let next = (current + 1) % choices.len();
+            .unwrap_or(0) as i32;
+        let next = (current + delta).rem_euclid(choices.len() as i32) as usize;
 
         match &choices[next] {
             Some(entry) => {
@@ -1455,22 +1552,22 @@ impl App {
                     .spawn();
             }
             LauncherItem::Controller | LauncherItem::ControllerP2 => {
-                self.controller_open = true;
+                self.open_controller();
             }
             LauncherItem::RescanControllers => {
                 self.sdl.refresh_controllers();
                 self.ensure_player2_device();
                 self.push_toast("Controllers rescanned".into(), MessageKind::Info, 2.0);
             }
-            LauncherItem::ControllerSettings => self.controller_open = true,
-            LauncherItem::MemoryCardManager => self.memory_card.open(),
+            LauncherItem::ControllerSettings => self.open_controller(),
+            LauncherItem::MemoryCardManager => self.open_memory_card(),
             LauncherItem::ToggleSplash => {
                 self.config.show_splash = !self.config.show_splash;
                 let _ = self.config.save();
             }
             LauncherItem::ToggleFps => self.toggle_fps_display(false),
             LauncherItem::ToggleFullscreen => self.toggle_fullscreen(ctx),
-            LauncherItem::Settings => self.settings_open = true,
+            LauncherItem::Settings => self.open_settings(),
             LauncherItem::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         }
     }
@@ -1499,7 +1596,7 @@ impl App {
                 let item = items[self.launcher_focus];
                 self.activate_launcher_item(item, ctx);
             }
-            NavAction::Cancel => {}
+            NavAction::Cancel | NavAction::PrevTab | NavAction::NextTab => {}
         }
     }
 
@@ -1511,11 +1608,7 @@ impl App {
         }
 
         egui::CentralPanel::default().show(ui, |ui| {
-            if self.file_browser.is_none()
-                && !self.settings_open
-                && !self.controller_open
-                && !self.memory_card.open
-            {
+            if self.file_browser.is_none() {
                 egui::Panel::bottom("launcher-hint")
                     .show_separator_line(false)
                     .show(ui, |ui| {
@@ -1822,10 +1915,277 @@ impl App {
         }
     }
 
-    fn settings_window(&mut self, ctx: &egui::Context) {
-        if !self.settings_open {
+    fn settings_categories(&self) -> Vec<(String, String)> {
+        let mut categories = vec![
+            ("appearance".to_string(), "Appearance".to_string()),
+            ("video".to_string(), "Video".to_string()),
+            (String::new(), "All options".to_string()),
+            ("uncategorized".to_string(), "Uncategorized".to_string()),
+        ];
+        if let Some(info) = &self.core_info {
+            for category in &info.categories {
+                categories.push((
+                    category.key.clone(),
+                    settings_category_label(&category.key, &category.label).to_string(),
+                ));
+            }
+        }
+        categories
+    }
+
+    fn settings_visible_option_keys(&self) -> Vec<String> {
+        let Some(info) = &self.core_info else {
+            return Vec::new();
+        };
+        let store = self.host.options.read().unwrap();
+        let search = self.settings_search.to_lowercase();
+        let category_keys: Vec<&str> = info
+            .categories
+            .iter()
+            .map(|category| category.key.as_str())
+            .collect();
+        let mut keys = Vec::new();
+        for option in &info.options {
+            if option.key == "swanstation_GPU_ResolutionScale" {
+                continue;
+            }
+            if !store.visible.get(&option.key).copied().unwrap_or(true) {
+                continue;
+            }
+            let category_matches = self.settings_category.is_empty()
+                || (self.settings_category == "uncategorized"
+                    && (option.category_key.is_empty()
+                        || !category_keys.contains(&option.category_key.as_str())))
+                || option.category_key == self.settings_category;
+            if !category_matches {
+                continue;
+            }
+            if !search.is_empty()
+                && !option.label.to_lowercase().contains(&search)
+                && !option.info.to_lowercase().contains(&search)
+                && !option.key.to_lowercase().contains(&search)
+            {
+                continue;
+            }
+            keys.push(option.key.clone());
+        }
+        keys
+    }
+
+    fn settings_entries(&self) -> Vec<SettingsEntry> {
+        match self.settings_category.as_str() {
+            "appearance" => {
+                let search = self.settings_search.to_lowercase();
+                let mut entries = vec![SettingsEntry::ReloadThemes];
+                for theme in &self.themes {
+                    if search.is_empty() || theme.name.to_lowercase().contains(&search) {
+                        entries.push(SettingsEntry::Theme(theme.name.clone()));
+                    }
+                }
+                entries
+            }
+            "video" => vec![
+                SettingsEntry::ShaderPreset,
+                SettingsEntry::ShaderSlider(ShaderSliderControl::Bloom),
+                SettingsEntry::ShaderSlider(ShaderSliderControl::Scanlines),
+                SettingsEntry::ShaderSlider(ShaderSliderControl::Curvature),
+                SettingsEntry::ShaderSlider(ShaderSliderControl::Mask),
+                SettingsEntry::ShaderSlider(ShaderSliderControl::Vignette),
+                SettingsEntry::ShaderReset,
+            ],
+            _ => {
+                let mut entries = vec![SettingsEntry::ResetAll, SettingsEntry::RestartCore];
+                let overrides = self.host.options.read().unwrap().overrides.clone();
+                for key in self.settings_visible_option_keys() {
+                    entries.push(SettingsEntry::Option(key.clone()));
+                    if overrides.contains_key(&key) {
+                        entries.push(SettingsEntry::OptionReset(key));
+                    }
+                }
+                entries
+            }
+        }
+    }
+
+    fn option_values(&self, key: &str) -> Vec<(String, String)> {
+        self.core_info
+            .as_ref()
+            .and_then(|info| info.options.iter().find(|option| option.key == key))
+            .map(|option| option.values.clone())
+            .unwrap_or_default()
+    }
+
+    fn persist_core_options(&mut self, restart_on_launcher: bool) {
+        self.config.core_options = self
+            .host
+            .options
+            .read()
+            .unwrap()
+            .overrides
+            .clone()
+            .into_iter()
+            .collect();
+        let _ = self.config.save();
+        if restart_on_launcher && self.screen == Screen::Launcher && !self.loading_game {
+            self.worker.send(Command::RestartCore);
+            self.push_toast("Applying settings…".into(), MessageKind::Info, 2.0);
+        }
+    }
+
+    fn cycle_option_value(&mut self, key: &str, delta: i32) {
+        let values = self.option_values(key);
+        if values.is_empty() {
             return;
         }
+        let current = self.host.option_value(key).unwrap_or_default();
+        let index = values
+            .iter()
+            .position(|(value, _)| value == &current)
+            .unwrap_or(0) as i32;
+        let next = (index + delta).rem_euclid(values.len() as i32) as usize;
+        self.host.set_option(key, values[next].0.clone());
+        self.persist_core_options(true);
+    }
+
+    fn reset_option_value(&mut self, key: &str) {
+        self.host.reset_option(key);
+        self.persist_core_options(true);
+    }
+
+    fn reset_all_options(&mut self) {
+        self.host.options.write().unwrap().reset_all();
+        self.persist_core_options(true);
+    }
+
+    fn apply_shader_preset(&mut self, preset: ShaderPreset) {
+        self.config.shader_preset = preset.as_str().to_string();
+        let defaults = preset.defaults();
+        self.config.shader_bloom = defaults.bloom;
+        self.config.shader_scanlines = defaults.scanlines;
+        self.config.shader_curvature = defaults.curvature;
+        self.config.shader_mask = defaults.mask;
+        self.config.shader_vignette = defaults.vignette;
+        self.shader.lock().unwrap().clear_error();
+        let _ = self.config.save();
+    }
+
+    fn adjust_shader_slider(&mut self, control: ShaderSliderControl, delta: i32) {
+        let (value, step, min, max) = match control {
+            ShaderSliderControl::Bloom => (&mut self.config.shader_bloom, 0.05, 0.0, 2.0),
+            ShaderSliderControl::Scanlines => (&mut self.config.shader_scanlines, 0.05, 0.0, 1.0),
+            ShaderSliderControl::Curvature => (&mut self.config.shader_curvature, 0.005, 0.0, 0.25),
+            ShaderSliderControl::Mask => (&mut self.config.shader_mask, 0.05, 0.0, 1.0),
+            ShaderSliderControl::Vignette => (&mut self.config.shader_vignette, 0.05, 0.0, 1.0),
+        };
+        *value = (*value + delta as f32 * step).clamp(min, max);
+        let _ = self.config.save();
+    }
+
+    fn reset_shader_defaults(&mut self) {
+        let preset = ShaderPreset::parse(&self.config.shader_preset);
+        self.apply_shader_preset(preset);
+    }
+
+    fn cycle_shader_preset(&mut self, delta: i32) {
+        let current = ShaderPreset::parse(&self.config.shader_preset);
+        let index = ShaderPreset::ALL
+            .iter()
+            .position(|preset| *preset == current)
+            .unwrap_or(0) as i32;
+        let next = (index + delta).rem_euclid(ShaderPreset::ALL.len() as i32) as usize;
+        self.apply_shader_preset(ShaderPreset::ALL[next]);
+    }
+
+    fn handle_settings_nav(&mut self, nav: NavAction, ctx: &egui::Context) {
+        let categories = self.settings_categories();
+        match self.settings_pane {
+            SettingsPane::Sidebar => match nav {
+                NavAction::Up => {
+                    if !categories.is_empty() {
+                        self.settings_sidebar_focus =
+                            (self.settings_sidebar_focus + categories.len() - 1) % categories.len();
+                        self.settings_category = categories[self.settings_sidebar_focus].0.clone();
+                    }
+                }
+                NavAction::Down => {
+                    if !categories.is_empty() {
+                        self.settings_sidebar_focus =
+                            (self.settings_sidebar_focus + 1) % categories.len();
+                        self.settings_category = categories[self.settings_sidebar_focus].0.clone();
+                    }
+                }
+                NavAction::Right | NavAction::Confirm => {
+                    if let Some((key, _)) = categories.get(self.settings_sidebar_focus) {
+                        self.settings_category = key.clone();
+                        self.settings_pane = SettingsPane::Content;
+                        self.settings_content_focus = 0;
+                    }
+                }
+                NavAction::Left | NavAction::PrevTab | NavAction::NextTab => {}
+                NavAction::Cancel => self.back_page(),
+            },
+            SettingsPane::Content => {
+                let entries = self.settings_entries();
+                if entries.is_empty() {
+                    self.settings_pane = SettingsPane::Sidebar;
+                    return;
+                }
+                self.settings_content_focus = self.settings_content_focus.min(entries.len() - 1);
+                match nav {
+                    NavAction::Up => {
+                        self.settings_content_focus =
+                            (self.settings_content_focus + entries.len() - 1) % entries.len();
+                    }
+                    NavAction::Down => {
+                        self.settings_content_focus =
+                            (self.settings_content_focus + 1) % entries.len();
+                    }
+                    NavAction::Left => self.adjust_settings_entry(-1),
+                    NavAction::Right => self.adjust_settings_entry(1),
+                    NavAction::Confirm => self.activate_settings_entry(ctx),
+                    NavAction::PrevTab | NavAction::NextTab => {}
+                    NavAction::Cancel => self.settings_pane = SettingsPane::Sidebar,
+                }
+            }
+        }
+    }
+
+    fn adjust_settings_entry(&mut self, delta: i32) {
+        let entries = self.settings_entries();
+        let Some(entry) = entries.get(self.settings_content_focus) else {
+            return;
+        };
+        match entry {
+            SettingsEntry::Option(key) => self.cycle_option_value(key, delta),
+            SettingsEntry::ShaderPreset => self.cycle_shader_preset(delta),
+            SettingsEntry::ShaderSlider(control) => self.adjust_shader_slider(*control, delta),
+            _ => {}
+        }
+    }
+
+    fn activate_settings_entry(&mut self, ctx: &egui::Context) {
+        let entries = self.settings_entries();
+        let Some(entry) = entries.get(self.settings_content_focus).cloned() else {
+            return;
+        };
+        match entry {
+            SettingsEntry::ResetAll => self.reset_all_options(),
+            SettingsEntry::RestartCore => {
+                self.worker.send(Command::RestartCore);
+                self.push_toast("Restarting core…".into(), MessageKind::Info, 2.0);
+            }
+            SettingsEntry::ReloadThemes => self.reload_theme_catalog(ctx),
+            SettingsEntry::Theme(name) => self.apply_theme_name(&name, ctx),
+            SettingsEntry::Option(key) => self.cycle_option_value(&key, 1),
+            SettingsEntry::OptionReset(key) => self.reset_option_value(&key),
+            SettingsEntry::ShaderPreset => self.cycle_shader_preset(1),
+            SettingsEntry::ShaderSlider(_) => {}
+            SettingsEntry::ShaderReset => self.reset_shader_defaults(),
+        }
+    }
+
+    fn settings_page(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
         let Some(info) = self.core_info.as_ref() else {
             return;
         };
@@ -1836,11 +2196,18 @@ impl App {
         let mut resets: Vec<String> = Vec::new();
         let mut reset_all = false;
         let mut restart_core = false;
-        let mut open = self.settings_open;
 
         let visible = host.options.read().unwrap().visible.clone();
         let overrides = host.options.read().unwrap().overrides.clone();
-        let categories = info.categories.clone();
+        let categories = self.settings_categories();
+        let category_info: std::collections::HashMap<String, String> = info
+            .categories
+            .iter()
+            .map(|category| (category.key.clone(), category.info.clone()))
+            .collect();
+        let settings_pane = self.settings_pane;
+        let sidebar_focus = self.settings_sidebar_focus;
+        let content_focus = self.settings_content_focus;
         let options = info.options.clone();
         let themes = self.themes.clone();
         let current_theme = self.config.theme.clone();
@@ -1848,21 +2215,13 @@ impl App {
         let theme_error = self.theme_error.clone();
         let mut theme_change: Option<String> = None;
         let mut reload_themes = false;
-        let mut header_close = false;
-        let window_frame = theme::window_frame(&ctx.global_style(), &self.ui_theme);
+        let mut back = false;
 
-        egui::Window::new("Settings")
-            .open(&mut open)
-            .title_bar(false)
-            .frame(window_frame)
-            .resizable(true)
-            .default_width(1200.0)
-            .default_height(700.0)
-            .show(ctx, |ui| {
-                if theme::window_header(ui, "Settings", &self.ui_theme) {
-                    header_close = true;
-                }
-                theme::window_body(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
+            if theme::page_header(ui, "Settings", &self.ui_theme) {
+                back = true;
+            }
+            theme::window_body(ui, |ui| {
                 ui.horizontal(|ui| {
                     if self.settings_category == "video" {
                         ui.label("Game shader");
@@ -1880,15 +2239,30 @@ impl App {
                                 .hint_text(hint),
                         );
                         if self.settings_category == "appearance" {
-                            if ui.button("Reload themes").clicked() {
+                            let focused = settings_pane == SettingsPane::Content
+                                && content_focus == 0;
+                            let response = ui.button("Reload themes");
+                            focus_ring(ui, response.rect, focused, &self.ui_theme);
+                            if response.clicked() {
                                 reload_themes = true;
+                                self.settings_content_focus = 0;
                             }
-                        } else {
-                            if ui.button("Reset all").clicked() {
+                        } else if self.settings_category != "video" {
+                            let reset_focused = settings_pane == SettingsPane::Content
+                                && content_focus == 0;
+                            let response = ui.button("Reset all");
+                            focus_ring(ui, response.rect, reset_focused, &self.ui_theme);
+                            if response.clicked() {
                                 reset_all = true;
+                                self.settings_content_focus = 0;
                             }
-                            if ui.button("Restart core").clicked() {
+                            let restart_focused = settings_pane == SettingsPane::Content
+                                && content_focus == 1;
+                            let response = ui.button("Restart core");
+                            focus_ring(ui, response.rect, restart_focused, &self.ui_theme);
+                            if response.clicked() {
                                 restart_core = true;
+                                self.settings_content_focus = 1;
                             }
                             let selected = self
                                 .host
@@ -1938,51 +2312,23 @@ impl App {
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
                         ui.set_width(230.0);
-                        if ui
-                            .selectable_label(
-                                self.settings_category == "appearance",
-                                "Appearance",
-                            )
-                            .clicked()
-                        {
-                            self.settings_category = "appearance".to_string();
-                        }
-                        if ui
-                            .selectable_label(self.settings_category == "video", "Video")
-                            .clicked()
-                        {
-                            self.settings_category = "video".to_string();
-                        }
-                        ui.separator();
-                        if ui
-                            .selectable_label(self.settings_category.is_empty(), "All options")
-                            .clicked()
-                        {
-                            self.settings_category.clear();
-                        }
-                        if ui
-                            .selectable_label(
-                                self.settings_category == "uncategorized",
-                                "Uncategorized",
-                            )
-                            .clicked()
-                        {
-                            self.settings_category = "uncategorized".to_string();
-                        }
-                        for category in &categories {
-                            let mut response = ui.selectable_label(
-                                self.settings_category == category.key,
-                                if category.label.is_empty() {
-                                    &category.key
-                                } else {
-                                    &category.label
-                                },
-                            );
-                            if !category.info.is_empty() {
-                                response = response.on_hover_text(&category.info);
+                        for (index, (key, label)) in categories.iter().enumerate() {
+                            let focused =
+                                settings_pane == SettingsPane::Sidebar
+                                    && sidebar_focus == index;
+                            let mut response =
+                                ui.selectable_label(self.settings_category == *key, label);
+                            if let Some(info) = category_info.get(key) {
+                                if !info.is_empty() {
+                                    response = response.on_hover_text(info);
+                                }
                             }
+                            focus_ring(ui, response.rect, focused, &self.ui_theme);
                             if response.clicked() {
-                                self.settings_category = category.key.clone();
+                                self.settings_category = key.clone();
+                                self.settings_sidebar_focus = index;
+                                self.settings_content_focus = 0;
+                                self.settings_pane = SettingsPane::Content;
                             }
                         }
                     });
@@ -2001,6 +2347,7 @@ impl App {
                             ui.add_space(6.0);
                             let search = self.settings_search.to_lowercase();
                             let mut shown = 0;
+                            let mut entry_index = 1;
                             egui::ScrollArea::vertical()
                                 .auto_shrink([false, false])
                                 .max_height((ui.available_height() - 16.0).max(200.0))
@@ -2012,15 +2359,23 @@ impl App {
                                             continue;
                                         }
                                         shown += 1;
+                                        let focused = settings_pane == SettingsPane::Content
+                                            && content_focus == entry_index;
                                         let response = theme::theme_picker_row(
                                             ui,
                                             theme,
                                             theme.name == current_theme,
                                             active_accent,
                                         );
+                                        focus_ring(ui, response.rect, focused, &self.ui_theme);
                                         if response.clicked() {
                                             theme_change = Some(theme.name.clone());
+                                            self.settings_content_focus = entry_index;
                                         }
+                                        if focused {
+                                            response.scroll_to_me(Some(egui::Align::Center));
+                                        }
+                                        entry_index += 1;
                                         ui.add_space(6.0);
                                     }
                                     if shown == 0 {
@@ -2036,7 +2391,9 @@ impl App {
 
                             let current_preset =
                                 ShaderPreset::parse(&self.config.shader_preset);
-                            egui::ComboBox::from_id_salt("shader-preset")
+                            let focused = settings_pane == SettingsPane::Content
+                                && content_focus == 0;
+                            let combo = egui::ComboBox::from_id_salt("shader-preset")
                                 .width(300.0)
                                 .selected_text(current_preset.label())
                                 .show_ui(ui, |ui| {
@@ -2048,79 +2405,103 @@ impl App {
                                             )
                                             .clicked()
                                         {
-                                            self.config.shader_preset =
-                                                preset.as_str().to_string();
-                                            let defaults = preset.defaults();
-                                            self.config.shader_bloom = defaults.bloom;
-                                            self.config.shader_scanlines =
-                                                defaults.scanlines;
-                                            self.config.shader_curvature =
-                                                defaults.curvature;
-                                            self.config.shader_mask = defaults.mask;
-                                            self.config.shader_vignette =
-                                                defaults.vignette;
-                                            shader.lock().unwrap().clear_error();
+                                            self.apply_shader_preset(preset);
                                             shader_dirty = true;
                                         }
                                     }
                                 });
+                            focus_ring(ui, combo.response.rect, focused, &self.ui_theme);
+                            if focused {
+                                combo.response.scroll_to_me(Some(egui::Align::Center));
+                            }
                             ui.add_space(8.0);
 
                             let mut changed = false;
-                            changed |= shader_slider(
+                            let response = shader_slider(
                                 ui,
                                 &self.ui_theme,
                                 &mut self.config.shader_bloom,
                                 0.0..=2.0,
                                 "Bloom strength",
-                            )
-                            .changed();
-                            changed |= shader_slider(
+                            );
+                            focus_ring(
+                                ui,
+                                response.rect,
+                                settings_pane == SettingsPane::Content && content_focus == 1,
+                                &self.ui_theme,
+                            );
+                            changed |= response.changed();
+                            let response = shader_slider(
                                 ui,
                                 &self.ui_theme,
                                 &mut self.config.shader_scanlines,
                                 0.0..=1.0,
                                 "Scanline strength",
-                            )
-                            .changed();
-                            changed |= shader_slider(
+                            );
+                            focus_ring(
+                                ui,
+                                response.rect,
+                                settings_pane == SettingsPane::Content && content_focus == 2,
+                                &self.ui_theme,
+                            );
+                            changed |= response.changed();
+                            let response = shader_slider(
                                 ui,
                                 &self.ui_theme,
                                 &mut self.config.shader_curvature,
                                 0.0..=0.25,
                                 "Curvature",
-                            )
-                            .changed();
-                            changed |= shader_slider(
+                            );
+                            focus_ring(
+                                ui,
+                                response.rect,
+                                settings_pane == SettingsPane::Content && content_focus == 3,
+                                &self.ui_theme,
+                            );
+                            changed |= response.changed();
+                            let response = shader_slider(
                                 ui,
                                 &self.ui_theme,
                                 &mut self.config.shader_mask,
                                 0.0..=1.0,
                                 "Aperture mask",
-                            )
-                            .changed();
-                            changed |= shader_slider(
+                            );
+                            focus_ring(
+                                ui,
+                                response.rect,
+                                settings_pane == SettingsPane::Content && content_focus == 4,
+                                &self.ui_theme,
+                            );
+                            changed |= response.changed();
+                            let response = shader_slider(
                                 ui,
                                 &self.ui_theme,
                                 &mut self.config.shader_vignette,
                                 0.0..=1.0,
                                 "Vignette",
-                            )
-                            .changed();
+                            );
+                            focus_ring(
+                                ui,
+                                response.rect,
+                                settings_pane == SettingsPane::Content && content_focus == 5,
+                                &self.ui_theme,
+                            );
+                            changed |= response.changed();
                             if changed {
                                 shader.lock().unwrap().clear_error();
                                 shader_dirty = true;
                             }
 
                             ui.add_space(8.0);
-                            if ui.button("Reset to preset defaults").clicked() {
-                                let defaults = current_preset.defaults();
-                                self.config.shader_bloom = defaults.bloom;
-                                self.config.shader_scanlines = defaults.scanlines;
-                                self.config.shader_curvature = defaults.curvature;
-                                self.config.shader_mask = defaults.mask;
-                                self.config.shader_vignette = defaults.vignette;
-                                shader.lock().unwrap().clear_error();
+                            let focused = settings_pane == SettingsPane::Content
+                                && content_focus == 6;
+                            let response = ui.button("Reset to preset defaults");
+                            focus_ring(ui, response.rect, focused, &self.ui_theme);
+                            if focused {
+                                response.scroll_to_me(Some(egui::Align::Center));
+                            }
+                            if response.clicked() {
+                                self.reset_shader_defaults();
                                 shader_dirty = true;
                             }
 
@@ -2145,6 +2526,7 @@ impl App {
                             .show(ui, |ui| {
                                 let search = self.settings_search.to_lowercase();
                                 let mut shown = 0;
+                                let mut entry_index = 2;
                                 egui::Grid::new("settings-options-grid")
                                     .num_columns(2)
                                     .striped(true)
@@ -2162,8 +2544,8 @@ impl App {
                                                 .is_empty()
                                                 || (self.settings_category == "uncategorized"
                                                     && (option.category_key.is_empty()
-                                                        || !categories.iter().any(|c| {
-                                                            c.key == option.category_key
+                                                        || !categories.iter().any(|(key, _)| {
+                                                            key == &option.category_key
                                                         })))
                                                 || option.category_key == self.settings_category;
                                             if !category_matches {
@@ -2177,6 +2559,9 @@ impl App {
                                                 continue;
                                             }
                                             shown += 1;
+                                            let focused = settings_pane
+                                                == SettingsPane::Content
+                                                && content_focus == entry_index;
                                             let current = host
                                                 .option_value(&option.key)
                                                 .unwrap_or_else(|| option.default.clone());
@@ -2230,10 +2615,44 @@ impl App {
                                                         }
                                                     }
                                                 });
-                                                if overrides.contains_key(&option.key)
-                                                    && ui.small_button("reset").clicked()
-                                                {
-                                                    resets.push(option.key.clone());
+                                                focus_ring(
+                                                    ui,
+                                                    response.response.rect,
+                                                    focused,
+                                                    &self.ui_theme,
+                                                );
+                                                if response.response.clicked() {
+                                                    self.settings_content_focus = entry_index;
+                                                }
+                                                if focused {
+                                                    response
+                                                        .response
+                                                        .scroll_to_me(Some(egui::Align::Center));
+                                                }
+                                                entry_index += 1;
+                                                if overrides.contains_key(&option.key) {
+                                                    let reset_focused = settings_pane
+                                                        == SettingsPane::Content
+                                                        && content_focus == entry_index;
+                                                    let reset_response =
+                                                        ui.small_button("reset");
+                                                    focus_ring(
+                                                        ui,
+                                                        reset_response.rect,
+                                                        reset_focused,
+                                                        &self.ui_theme,
+                                                    );
+                                                    if reset_response.clicked() {
+                                                        resets.push(option.key.clone());
+                                                        self.settings_content_focus =
+                                                            entry_index;
+                                                    }
+                                                    if reset_focused {
+                                                        reset_response.scroll_to_me(Some(
+                                                            egui::Align::Center,
+                                                        ));
+                                                    }
+                                                    entry_index += 1;
                                                 }
                                                 if !option.info.is_empty() {
                                                     response.response.on_hover_text(&option.info);
@@ -2251,16 +2670,15 @@ impl App {
                 });
                 });
             });
-        if header_close {
-            open = false;
+        if back {
+            self.back_page();
         }
-        self.settings_open = open;
 
         if reload_themes {
-            self.reload_theme_catalog(ctx);
+            self.reload_theme_catalog(&ctx);
         }
         if let Some(name) = theme_change {
-            self.apply_theme_name(&name, ctx);
+            self.apply_theme_name(&name, &ctx);
         }
 
         let options_changed = !changes.is_empty() || !resets.is_empty() || reset_all;
@@ -2347,11 +2765,7 @@ impl App {
         }
     }
 
-    fn controller_window(&mut self, ctx: &egui::Context) {
-        if !self.controller_open {
-            return;
-        }
-        let mut open = self.controller_open;
+    fn controller_page(&mut self, ui: &mut egui::Ui) {
         let mut dirty = false;
         let mut device_change: Option<(u32, u32)> = None;
         let mut rescan = false;
@@ -2359,22 +2773,15 @@ impl App {
         let host = self.host.clone();
 
         let ui_theme = self.ui_theme;
-        let window_frame = theme::window_frame(&ctx.global_style(), &ui_theme);
-        let mut header_close = false;
+        let mut back = false;
         let sdl = &mut self.sdl;
         let config = &mut self.config;
 
-        egui::Window::new("Controller")
-            .open(&mut open)
-            .title_bar(false)
-            .frame(window_frame)
-            .resizable(false)
-            .default_width(760.0)
-            .show(ctx, |ui| {
-                if theme::window_header(ui, "Controller", &ui_theme) {
-                    header_close = true;
-                }
-                theme::window_body(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
+            if theme::page_header(ui, "Controller", &ui_theme) {
+                back = true;
+            }
+            theme::window_body(ui, |ui| {
                     ui.heading("SDL game controllers");
                     let controllers = sdl.controllers().to_vec();
 
@@ -2455,7 +2862,8 @@ impl App {
                             });
                     });
 
-                    if ui.button("Rescan controllers").clicked() {
+                    let response = ui.button("Rescan controllers");
+                    if response.clicked() {
                         rescan = true;
                     }
                     ui.weak("Player 1 drives the launcher and menus. Player 2 is game-only. PS / Guide opens the in-game menu.");
@@ -2487,67 +2895,62 @@ impl App {
                                 } else {
                                     "Port 2 (Player 2)"
                                 });
-                                egui::ComboBox::from_id_salt(format!("device-type-{port}"))
-                                    .width(300.0)
-                                    .selected_text(current_name)
-                                    .show_ui(ui, |ui| {
-                                        for (name, id) in &port_info.types {
-                                            if ui
-                                                .selectable_label(
-                                                    Some(*id) == current_id,
-                                                    name,
-                                                )
-                                                .clicked()
-                                            {
-                                                if port == 0 {
-                                                    config.port1_device = Some(*id);
-                                                } else {
-                                                    config.port2_device = Some(*id);
-                                                }
-                                                device_change = Some((port as u32, *id));
-                                                dirty = true;
+                                egui::ComboBox::from_id_salt(format!(
+                                    "device-type-{port}"
+                                ))
+                                .width(300.0)
+                                .selected_text(current_name)
+                                .show_ui(ui, |ui| {
+                                    for (name, id) in &port_info.types {
+                                        if ui
+                                            .selectable_label(
+                                                Some(*id) == current_id,
+                                                name,
+                                            )
+                                            .clicked()
+                                        {
+                                            if port == 0 {
+                                                config.port1_device = Some(*id);
+                                            } else {
+                                                config.port2_device = Some(*id);
                                             }
+                                            device_change = Some((port as u32, *id));
+                                            dirty = true;
                                         }
-                                    });
+                                    }
+                                });
                             });
                         }
                         if info.ports.len() < PORTS {
                             ui.weak("This core exposes only one controller port.");
                         }
                     }
-
                     ui.add(
                         egui::Slider::new(&mut config.input.deadzone, 0.0..=0.6)
                             .text("Stick deadzone"),
                     );
-                    if ui
-                        .checkbox(
-                            &mut config.input.pause_on_menu,
-                            "Pause game while the menu is open",
-                        )
-                        .changed()
-                    {
+                    let response = ui.checkbox(
+                        &mut config.input.pause_on_menu,
+                        "Pause game while the menu is open",
+                    );
+                    if response.changed() {
                         dirty = true;
                     }
                     ui.horizontal(|ui| {
                         ui.label("Fallback menu combo:");
-                        if ui
-                            .selectable_label(
-                                config.input.menu_button == "guide",
-                                "None (PS/Guide only)",
-                            )
-                            .clicked()
-                        {
+                        let response = ui.selectable_label(
+                            config.input.menu_button == "guide",
+                            "None (PS/Guide only)",
+                        );
+                        if response.clicked() {
                             config.input.menu_button = "guide".into();
                             dirty = true;
                         }
-                        if ui
-                            .selectable_label(
-                                config.input.menu_button == "select_start",
-                                "Select + Start",
-                            )
-                            .clicked()
-                        {
+                        let response = ui.selectable_label(
+                            config.input.menu_button == "select_start",
+                            "Select + Start",
+                        );
+                        if response.clicked() {
                             config.input.menu_button = "select_start".into();
                             dirty = true;
                         }
@@ -2572,10 +2975,9 @@ impl App {
                     }
                 });
             });
-        if header_close {
-            open = false;
+        if back {
+            self.back_page();
         }
-        self.controller_open = open;
         if rescan {
             self.sdl.refresh_controllers();
             dirty = true;
@@ -2600,11 +3002,13 @@ impl App {
         self.sync_player2_port();
     }
 
-    fn memory_card_window(&mut self, ctx: &egui::Context) {
-        if !self.memory_card.open {
-            return;
+    fn memory_card_page(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let ui_theme = self.ui_theme;
+        let (back, toast) = self.memory_card.page(ui, &ctx, &ui_theme);
+        if back {
+            self.back_page();
         }
-        let toast = self.memory_card.show(ctx, &self.ui_theme);
         if self.memory_card.source_dir_dirty {
             self.config.memory_card_source_dir = self.memory_card.source_dir.clone();
             let _ = self.config.save();
@@ -2738,12 +3142,12 @@ impl eframe::App for App {
             Screen::Splash => self.splash(ui),
             Screen::Launcher => self.launcher(ui),
             Screen::Game => self.game(ui),
+            Screen::Settings => self.settings_page(ui),
+            Screen::Controller => self.controller_page(ui),
+            Screen::MemoryCard => self.memory_card_page(ui),
         }
 
-        self.settings_window(&ctx);
-        self.controller_window(&ctx);
         self.browser_window(&ctx);
-        self.memory_card_window(&ctx);
         if self.screen != Screen::Splash {
             self.draw_toasts(&ctx);
         }
@@ -2754,6 +3158,18 @@ impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         self.ui_theme.background.to_normalized_gamma_f32()
     }
+}
+
+fn focus_ring(ui: &egui::Ui, rect: egui::Rect, focused: bool, theme: &UiTheme) {
+    if !focused {
+        return;
+    }
+    ui.painter().rect_stroke(
+        rect.expand(2.0),
+        egui::CornerRadius::same(7),
+        egui::Stroke::new(2.0, theme.accent),
+        egui::StrokeKind::Outside,
+    );
 }
 
 /// Sliders need their own rail/handle colours: the regular inactive widget
@@ -2776,6 +3192,18 @@ fn shader_slider(
         ui.add(egui::Slider::new(value, range).text(text))
     })
     .inner
+}
+
+fn settings_category_label<'a>(key: &'a str, fallback: &'a str) -> &'a str {
+    match key {
+        "console" => "Console",
+        "enhancement" => "Graphics",
+        "display" => "Display",
+        "port" => "Ports",
+        "advanced" => "Advanced",
+        _ if fallback.is_empty() => key,
+        _ => fallback,
+    }
 }
 
 fn choose_port_device(types: &[(String, u32)], configured: Option<u32>) -> Option<u32> {
@@ -2815,6 +3243,12 @@ fn controller_label(controllers: &[ControllerEntry], entry: &ControllerEntry) ->
     }
 }
 
+fn consume_escape(ctx: &egui::Context) {
+    ctx.input_mut(|input| {
+        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
+    });
+}
+
 fn key_to_nav(ctx: &egui::Context) -> Option<NavAction> {
     if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
         Some(NavAction::Up)
@@ -2828,6 +3262,10 @@ fn key_to_nav(ctx: &egui::Context) -> Option<NavAction> {
         Some(NavAction::Confirm)
     } else if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         Some(NavAction::Cancel)
+    } else if ctx.input(|i| i.key_pressed(egui::Key::PageUp)) {
+        Some(NavAction::PrevTab)
+    } else if ctx.input(|i| i.key_pressed(egui::Key::PageDown)) {
+        Some(NavAction::NextTab)
     } else {
         None
     }
@@ -2938,5 +3376,30 @@ mod tests {
         ];
         assert!(controller_label(&controllers, &controllers[0]).contains("[10]"));
         assert!(controller_label(&controllers, &controllers[1]).contains("[11]"));
+    }
+
+    #[test]
+    fn settings_categories_use_short_labels() {
+        assert_eq!(
+            settings_category_label("console", "Console Settings"),
+            "Console"
+        );
+        assert_eq!(
+            settings_category_label("enhancement", "Enhancement Settings"),
+            "Graphics"
+        );
+        assert_eq!(
+            settings_category_label("display", "Display Settings"),
+            "Display"
+        );
+        assert_eq!(settings_category_label("port", "Port Settings"), "Ports");
+        assert_eq!(
+            settings_category_label("advanced", "Advanced Settings"),
+            "Advanced"
+        );
+        assert_eq!(
+            settings_category_label("custom", "Custom Category"),
+            "Custom Category"
+        );
     }
 }

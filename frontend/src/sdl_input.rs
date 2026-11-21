@@ -29,6 +29,8 @@ pub enum NavAction {
     Right,
     Confirm,
     Cancel,
+    PrevTab,
+    NextTab,
 }
 
 struct PlayerSlot {
@@ -78,7 +80,7 @@ pub struct SdlState {
     activity: bool,
     suppress_input: bool,
     suppress_deadline: Option<Instant>,
-    nav_prev: [bool; 6],
+    nav_prev: [bool; 8],
     nav_repeat_at: Option<Instant>,
     // Keep the subsystem/device handles alive and drop them before SDL_Quit.
     _audio_device: Option<AudioDevice<RingAudio>>,
@@ -163,7 +165,7 @@ impl SdlState {
             activity: false,
             suppress_input: false,
             suppress_deadline: None,
-            nav_prev: [false; 6],
+            nav_prev: [false; 8],
             nav_repeat_at: None,
         };
         state.refresh_controllers();
@@ -472,17 +474,17 @@ impl SdlState {
     /// until the dismissing press is released.
     pub fn poll_menu_nav(&mut self, active: bool) -> Vec<NavAction> {
         if !active {
-            self.nav_prev = [false; 6];
+            self.nav_prev = [false; 8];
             self.nav_repeat_at = None;
             return Vec::new();
         }
         let Some(player) = self.ui_player() else {
-            self.nav_prev = [false; 6];
+            self.nav_prev = [false; 8];
             self.nav_repeat_at = None;
             return Vec::new();
         };
         let Some(controller) = self.players[player].controller.as_ref() else {
-            self.nav_prev = [false; 6];
+            self.nav_prev = [false; 8];
             self.nav_repeat_at = None;
             return Vec::new();
         };
@@ -493,6 +495,8 @@ impl SdlState {
             controller.button(Button::DPadRight) || controller.axis(Axis::LeftX) > 16000,
             controller.button(Button::A),
             controller.button(Button::B),
+            controller.button(Button::LeftShoulder),
+            controller.button(Button::RightShoulder),
         ];
         if self.suppress_input {
             self.nav_prev = state;
@@ -506,11 +510,13 @@ impl SdlState {
             NavAction::Right,
             NavAction::Confirm,
             NavAction::Cancel,
+            NavAction::PrevTab,
+            NavAction::NextTab,
         ];
         let now = Instant::now();
         let mut out = Vec::new();
         let repeat_due = self.nav_repeat_at.map(|t| now >= t).unwrap_or(false);
-        for i in 0..6 {
+        for i in 0..8 {
             if state[i] && !self.nav_prev[i] {
                 out.push(actions[i]);
                 if i < 4 {

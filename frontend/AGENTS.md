@@ -16,7 +16,8 @@ SDL2, and loads `swanstation_libretro.so` directly. RetroArch is not required.
 The front-end intentionally stays small:
 
 - TV-sized, controller-friendly launcher, file browser and pause menu.
-- Mouse/keyboard Settings and Controller windows.
+- Full-screen Settings, Controller and Memory Card Manager pages; the Controller
+  page is mouse/keyboard only.
 - Save states, memory cards, BIOS management and core options.
 - Memory Card Manager for `.srm`/`.mcd`/`.gme` cards, including DuckStation/RetroArch import and DexDrive conversion.
 - Themeable UI with JAPS1ME as the default.
@@ -146,7 +147,7 @@ is missing, it emits a placeholder. Do not hand-edit generated files in
 | Path | Responsibility |
 | --- | --- |
 | `src/main.rs` | CLI flags, config load, core discovery, eframe window setup, `--selftest` and `--selftest-hw`. |
-| `src/app.rs` | App state, splash, launcher, in-game pause overlay, settings/controller windows, toasts. |
+| `src/app.rs` | App state, splash, launcher, game view, pause overlay, full-screen Settings/Controller/Memory Card pages, file-browser dialog and toasts. |
 | `src/theme.rs` | Theme catalog parsing, `UiTheme` derivation, contrast engine, theme picker rows, custom window headers. |
 | `src/tv_ui.rs` | Large full-width TV rows and controller hints. |
 | `src/filebrowser.rs` | Built-in file browser for games and BIOS images. |
@@ -181,8 +182,8 @@ Startup flows roughly like this:
 4. `HostState` is installed as the libretro host singleton.
 5. `App::new()` loads the core, loads the theme catalog, applies the selected
    theme, and starts the emulation worker.
-6. `App` renders the splash, launcher, game view, pause overlay, settings,
-   controller and file-browser windows.
+6. `App` renders the splash, launcher, game view, pause overlay, full-screen
+   Settings/Controller/Memory Card pages, and the file-browser dialog.
 
 Emulation runs on a worker thread. Video frames are handed to the egui texture
 through `HostState`; audio goes through the shared SDL callback. Input is mapped
@@ -263,10 +264,24 @@ works with both the software and hardware renderers.
   monospace 17 px.
 - Launcher, file-browser and pause-menu rows are full-width and at least 52 px
   tall. Focused rows get a strong outline and controller hints stay visible.
-- Controller navigation covers the launcher, file browser and pause overlay.
+- Controller navigation covers the launcher, file browser, pause overlay,
+  Settings and Memory Card Manager. The Controller page intentionally ignores
+  controller input so buttons can be tested; it is mouse/keyboard only.
   Player 1 drives menus; Player 2 is game-only. If Player 1 is absent, Player 2
-  can drive the UI as a fallback. Settings, Controller and Memory Card Manager
-  windows are mouse/keyboard for now.
+  can drive the UI as a fallback. Text entry (Settings search, source paths,
+  card/icon names) stays keyboard/mouse only.
+- Settings/Controller/Memory Card are full-screen `Screen` pages, not egui
+  windows. Use a small screen stack for Back navigation. Opening Settings or
+  Controller from the pause overlay returns to the overlay, not straight to the
+  game.
+- Settings/category focus uses a two-pane model: sidebar vs content. Up/Down
+  moves within a pane, Right/Confirm enters content, Left/Right changes values,
+  Cancel backs out one level, Guide closes the top window. Draw focus with the
+  theme accent (`focus_ring`) and scroll the focused row into view.
+- Settings sidebar labels are a frontend display mapping over the core category
+  keys: `enhancement` → **Graphics**, `console` → **Console**, `display` →
+  **Display**, `port` → **Ports**, `advanced` → **Advanced**. Do not rename the
+  core option categories in `libretro_core_options.h` for this.
 - Player 2 is opt-in. SwanStation port 2 stays disabled until a controller is
   assigned, and is set back to `RETRO_DEVICE_NONE` when cleared or disconnected.
 - The press that dismisses the splash is consumed until release, matching the
@@ -374,20 +389,20 @@ active widget text. `Theme::apply()` sets colors per state:
 widget color. Any explicit strong label that is not on an accent background must
 set its own color, as the settings labels do.
 
-### Custom window headers
+### Page and dialog headers
 
-egui's native window title uses the ordinary text color, not `on_accent`. The
-Settings, Controller and File Browser windows therefore use:
+egui's native window title uses the ordinary text color, not `on_accent`.
 
-- `.title_bar(false)`
-- `theme::window_frame(...)` with zero content margin
-- `theme::window_header(...)` with an accent background, `on_accent` title and a
-  custom close button
-- `theme::window_body(...)` for the padded body
+- Settings, Controller and Memory Card Manager are full `Screen` pages. They use
+  `theme::page_header(...)` with an accent background, `on_accent` title and a
+  Back button, plus `theme::window_body(...)` for padding.
+- The file browser remains an `egui::Window` dialog. It uses `.title_bar(false)`,
+  `theme::window_frame(...)`, `theme::window_header(...)` and
+  `theme::window_body(...)`.
 
-Do not re-enable the native title bar for these windows without solving the
-light-accent/white-text contrast bug. Without a title bar, egui falls back to
-drag-anywhere window movement; this is expected.
+Do not re-enable native title bars without solving the light-accent/white-text
+contrast bug. Without a title bar, the file browser falls back to drag-anywhere
+window movement; this is expected.
 
 ## egui gotchas
 
@@ -577,8 +592,8 @@ Visual checklist for UI changes:
 - Light and Solarized Light settings and warnings.
 - Burgundy on Black repaired text.
 - An external theme loaded from `~/.config/tsunderestation/themes.toml`.
-- Settings/Controller/File Browser custom headers and close buttons.
-- Player 1 and Player 2 controller rows and their Controller-window assignments.
+- Settings/Controller/Memory Card page headers and Back buttons; file-browser dialog header and close button.
+- Player 1 and Player 2 controller rows and their Controller-page assignments.
 - Two controllers in a two-player game, including Player 2 hotplug and clearing
   Player 2 back to **None**.
 - Holding Cross or Enter through the splash does not activate a launcher row.
@@ -588,6 +603,12 @@ Visual checklist for UI changes:
   than a crash.
 - Settings → Video shows Off/Soft CRT/Blurpi-inspired/Royale-inspired; the
   shader affects only the game image and leaves menus/FPS/toasts sharp.
+- Controller focus rings move through Settings categories/options/Video and
+  Memory Card Manager tabs/lists/actions; Cancel backs out and Guide closes the
+  page. The Controller page ignores controller input entirely.
+- LB/RB switches Memory Card Local/Import tabs; Import/Delete/Export are
+  focusable even when disabled.
+- Settings sidebar shows Console, Graphics, Display, Ports and Advanced.
 - Toast text on info/warning/error backgrounds.
 - Memory Card Manager: launcher entry, local card list, save list and icon preview.
 - `.gme` warning and conversion, DuckStation card copy, duplicate import confirmation, delete confirmation and icon export.
