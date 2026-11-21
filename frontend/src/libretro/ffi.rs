@@ -18,6 +18,25 @@ pub type retro_input_state_t =
     extern "C" fn(port: c_uint, device: c_uint, index: c_uint, id: c_uint) -> i16;
 pub type retro_set_rumble_state_t =
     extern "C" fn(port: c_uint, effect: c_int, strength: u16) -> bool;
+pub type retro_hw_context_reset_t = unsafe extern "C" fn();
+pub type retro_hw_get_current_framebuffer_t = unsafe extern "C" fn() -> usize;
+pub type retro_hw_get_proc_address_t = unsafe extern "C" fn(sym: *const c_char) -> *mut c_void;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct retro_hw_render_callback {
+    pub context_type: c_uint,
+    pub context_reset: Option<retro_hw_context_reset_t>,
+    pub get_current_framebuffer: Option<retro_hw_get_current_framebuffer_t>,
+    pub get_proc_address: Option<retro_hw_get_proc_address_t>,
+    pub depth: bool,
+    pub stencil: bool,
+    pub bottom_left_origin: bool,
+    pub version_major: c_uint,
+    pub version_minor: c_uint,
+    pub cache_context: bool,
+    pub context_destroy: Option<retro_hw_context_reset_t>,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -240,6 +259,21 @@ pub const RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK: c_uint = 6
 pub const RETRO_ENVIRONMENT_GET_THROTTLE_STATE: c_uint = 71 | 0x10000;
 pub const RETRO_ENVIRONMENT_GET_SAVESTATE_CONTEXT: c_uint = 72 | 0x10000;
 pub const RETRO_ENVIRONMENT_GET_VFS_INTERFACE: c_uint = 45 | 0x10000;
+
+// Hardware render context types.
+pub const RETRO_HW_CONTEXT_NONE: c_uint = 0;
+pub const RETRO_HW_CONTEXT_OPENGL: c_uint = 1;
+pub const RETRO_HW_CONTEXT_OPENGLES2: c_uint = 2;
+pub const RETRO_HW_CONTEXT_OPENGL_CORE: c_uint = 3;
+pub const RETRO_HW_CONTEXT_OPENGLES3: c_uint = 4;
+pub const RETRO_HW_CONTEXT_OPENGLES_VERSION: c_uint = 5;
+pub const RETRO_HW_CONTEXT_VULKAN: c_uint = 6;
+pub const RETRO_HW_CONTEXT_D3D11: c_uint = 7;
+pub const RETRO_HW_CONTEXT_D3D10: c_uint = 8;
+pub const RETRO_HW_CONTEXT_D3D12: c_uint = 9;
+
+/// `RETRO_HW_FRAME_BUFFER_VALID` is `(void*)-1` in libretro.
+pub const RETRO_HW_FRAME_BUFFER_VALID: isize = -1;
 
 // Pixel formats.
 pub const RETRO_PIXEL_FORMAT_0RGB1555: c_int = 0;

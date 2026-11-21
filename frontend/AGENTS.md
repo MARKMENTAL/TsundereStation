@@ -79,7 +79,16 @@ Run the headless smoke test:
 ```
 
 It boots BIOS-only content, runs frames, checks video/audio and round-trips a
-save state. It does not need a display.
+save state. It does not need a display and forces software rendering.
+
+To exercise the headless EGL/OpenGL path as well:
+
+```sh
+./target/release/tsunderestation --selftest-hw
+```
+
+This fails if the requested hardware renderer produces no hardware frames. On
+machines without EGL/OpenGL it will report the expected fallback instead.
 
 Build the AppImages:
 
@@ -118,17 +127,17 @@ is missing, it emits a placeholder. Do not hand-edit generated files in
 
 ## Version and artifact policy
 
-- Current version: **0.2.1**.
+- Current version: **0.3.0**.
 - Do not bump the version for ordinary fixes or documentation changes unless
   explicitly asked.
 - Do not rename the AppImage major/minor path casually. Rebuild the existing
   version in place for fixes.
 - After rebuilding, report the new SHA256 of both
-  `dist/TsundereStation-0.2.1-x86_64.AppImage` and
-  `dist/TsundereStation-0.2.1-aarch64.AppImage`.
+  `dist/TsundereStation-0.3.0-x86_64.AppImage` and
+  `dist/TsundereStation-0.3.0-aarch64.AppImage`.
 - Generated release files use tag `v<version>`, e.g.
-  `TsundereStation-v0.2.1-SHA256SUMS.txt` and
-  `TsundereStation-v0.2.1-release.md`. Upload both AppImages and the checksum
+  `TsundereStation-v0.3.0-SHA256SUMS.txt` and
+  `TsundereStation-v0.3.0-release.md`. Upload both AppImages and the checksum
   file manually; paste the release draft as GitHub release notes.
 - Documentation-only changes do not require rebuilding the AppImage.
 
@@ -136,7 +145,7 @@ is missing, it emits a placeholder. Do not hand-edit generated files in
 
 | Path | Responsibility |
 | --- | --- |
-| `src/main.rs` | CLI flags, config load, core discovery, eframe window setup, `--selftest`. |
+| `src/main.rs` | CLI flags, config load, core discovery, eframe window setup, `--selftest` and `--selftest-hw`. |
 | `src/app.rs` | App state, splash, launcher, in-game pause overlay, settings/controller windows, toasts. |
 | `src/theme.rs` | Theme catalog parsing, `UiTheme` derivation, contrast engine, theme picker rows, custom window headers. |
 | `src/tv_ui.rs` | Large full-width TV rows and controller hints. |
@@ -145,6 +154,7 @@ is missing, it emits a placeholder. Do not hand-edit generated files in
 | `src/memory_card/` | Vendored JAPS1ME card engine and Memory Card Manager UI. |
 | `src/emu.rs` | Emulation worker thread, commands, save states, memory cards and disc swaps. |
 | `src/sdl_input.rs` | SDL controller discovery, player slots, per-port mapping, rumble, navigation and shared audio callback. |
+| `src/libretro/hardware.rs` | Headless EGL/OpenGL context, FBO readback, renderer fallback and worker startup preparation. |
 | `src/splash.rs` | Embedded logo/motif decoding and window icon. |
 | `src/screenshot.rs` | JPEG screenshot naming and encoding. |
 | `src/libretro/` | Hand-written libretro ABI, core loader, host callbacks, video/audio/input handoff. |
@@ -178,6 +188,31 @@ through `HostState`; audio goes through the shared SDL callback. Input is mapped
 from SDL to per-port libretro snapshots: Player 1 writes port 1, Player 2 writes
 port 2. Controller identity is persistent by GUID and bound per session by SDL
 instance ID.
+
+### Hardware rendering
+
+The core can render with OpenGL through a headless EGL context. `src/libretro/hardware.rs`
+provides a 1024×1024 RGBA8 FBO, fills the libretro `retro_hw_render_callback`,
+and reads the FBO back into the existing `VideoMailbox` (row-flipped and made
+opaque). The core always gets the 1× native resolution in this release.
+
+The ordering is critical:
+
+1. `main` resolves the core and starts `WorkerHandle` **before** `eframe`.
+2. The worker calls `hardware::prepare_on_worker()` and creates the EGL context
+   on its own thread.
+3. The worker signals startup; only then does eframe create the UI's GL context.
+4. `App::new` receives the already-started worker instead of spawning it.
+
+Do not create the worker's EGL context after eframe is live: some Mesa/EGL/X11
+combinations fail `eglMakeCurrent` in that situation. The context is kept alive
+across core restarts and only dropped when the worker exits.
+
+`swanstation_GPU_Renderer` accepts Auto/OpenGL/Software. Unsupported Vulkan/D3D
+values are filtered out and old config values fall back to Auto. If EGL/OpenGL
+setup fails, `SET_HW_RENDER` returns false and the core uses the software
+renderer. Keep the AppImage free of bundled `libEGL`, `libGL`, X11/Wayland,
+GBM/DRM and ALSA libraries; those must come from the host.
 
 ## UI and product decisions
 
@@ -350,7 +385,7 @@ Useful flags:
 
 ```text
 --core <core.so>  --game <disc>  --boot-bios  --bios-dir <dir>
---no-splash  --splash  --selftest  --version
+--no-splash  --splash  --selftest  --selftest-hw  --version
 ```
 
 For isolated manual testing, set `XDG_CONFIG_HOME` and `XDG_DATA_HOME` to
@@ -459,6 +494,7 @@ cargo test
 cargo clippy --all-targets
 cargo build --release
 ./target/release/tsunderestation --selftest
+./target/release/tsunderestation --selftest-hw
 ```
 
 Palette/contrast changes must keep these tests passing:
@@ -505,6 +541,10 @@ Visual checklist for UI changes:
 - Two controllers in a two-player game, including Player 2 hotplug and clearing
   Player 2 back to **None**.
 - Holding Cross or Enter through the splash does not activate a launcher row.
+- GPU Renderer Auto selects OpenGL and the FPS overlay shows `HW`; selecting
+  Software shows `SW` after a core restart.
+- Disabling EGL/OpenGL causes a clean software fallback with a warning rather
+  than a crash.
 - Toast text on info/warning/error backgrounds.
 - Memory Card Manager: launcher entry, local card list, save list and icon preview.
 - `.gme` warning and conversion, DuckStation card copy, duplicate import confirmation, delete confirmation and icon export.
@@ -515,8 +555,8 @@ For AppImage changes, build both architectures and run their selftests:
 
 ```sh
 ./packaging/build-appimage.sh --arch all --skip-build
-sha256sum dist/TsundereStation-0.2.1-x86_64.AppImage
-sha256sum dist/TsundereStation-0.2.1-aarch64.AppImage
+sha256sum dist/TsundereStation-0.3.0-x86_64.AppImage
+sha256sum dist/TsundereStation-0.3.0-aarch64.AppImage
 ```
 
 ## Change checklist
@@ -546,8 +586,9 @@ affiliated with or endorsed by any anime or game rights holders.
 
 ## Known limitations
 
-- Software renderer only; hardware GL/Vulkan rendering, upscaling and PGXP are
-  not wired up.
+- Hardware rendering is OpenGL-only and fixed at 1× native resolution.
+  Vulkan/D3D, upscaling and PGXP are not wired up. Software rendering remains
+  available as a fallback.
 - Two controllers mapped to ports 1 and 2; multitap is not exposed.
 - Multi-disc swapping requires an `.m3u` playlist; single-file images expose one
   image only.

@@ -13,6 +13,7 @@ mod tv_ui;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -20,6 +21,7 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let mut config = config::Config::load();
     let mut selftest = false;
+    let mut selftest_hardware = false;
     let mut auto_start = false;
     let mut auto_boot_bios = false;
     let mut splash_override: Option<bool> = None;
@@ -50,13 +52,17 @@ fn main() -> Result<()> {
             "--no-splash" => splash_override = Some(false),
             "--splash" => splash_override = Some(true),
             "--selftest" => selftest = true,
+            "--selftest-hw" => {
+                selftest = true;
+                selftest_hardware = true;
+            }
             "--version" | "-V" => {
                 println!("TsundereStation {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
             "--help" | "-h" => {
                 println!(
-                    "tsunderestation [--core <core.so>] [--game <disc>] [--boot-bios] [--bios-dir <dir>] [--no-splash] [--splash] [--selftest] [--version]"
+                    "tsunderestation [--core <core.so>] [--game <disc>] [--boot-bios] [--bios-dir <dir>] [--no-splash] [--splash] [--selftest] [--selftest-hw] [--version]"
                 );
                 return Ok(());
             }
@@ -84,7 +90,7 @@ fn main() -> Result<()> {
     }
 
     if selftest {
-        return run_selftest(&config, core_path, host);
+        return run_selftest(&config, core_path, host, selftest_hardware);
     }
 
     let core = match core_path {
@@ -96,6 +102,16 @@ fn main() -> Result<()> {
             );
         }
     };
+
+    // Start the emulation worker before eframe. It prepares the headless GL
+    // context on its own thread before the UI creates its X11/Wayland context.
+    let mut worker = emu::WorkerHandle::spawn(
+        core,
+        host.clone(),
+        config.core_options.clone(),
+        config.state_dir.clone(),
+    );
+    worker.wait_for_startup(Duration::from_secs(5));
 
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_inner_size([1280.0, 800.0])
@@ -119,7 +135,7 @@ fn main() -> Result<()> {
                 cc,
                 config,
                 host,
-                core,
+                worker,
                 auto_start,
                 auto_boot_bios,
                 splash_override,
@@ -137,11 +153,20 @@ fn run_selftest(
     config: &config::Config,
     core_path: Option<PathBuf>,
     host: Arc<libretro::host::HostState>,
+    hardware: bool,
 ) -> Result<()> {
     let core = core_path.context("core library not found")?;
     log::info!("Self-test using core {}", core.display());
 
-    let mut ch = libretro::loader::CoreHost::new(&core, host.clone(), &config.core_options)?;
+    // The normal smoke test stays headless and deterministic. The optional
+    // hardware mode exercises the EGL/FBO path when a GL implementation is
+    // available.
+    let mut selftest_options = config.core_options.clone();
+    selftest_options.insert(
+        "swanstation_GPU_Renderer".to_string(),
+        if hardware { "OpenGL" } else { "Software" }.to_string(),
+    );
+    let mut ch = libretro::loader::CoreHost::new(&core, host.clone(), &selftest_options)?;
     let info = ch.info().clone();
     println!("core: {} {}", info.name, info.version);
     println!("core options: {}", info.options.len());
@@ -189,6 +214,18 @@ fn run_selftest(
         anyhow::bail!("core produced no video frames");
     }
     println!("audio frames queued: {}", host.audio.queued_frames());
+    if hardware {
+        println!(
+            "hardware renderer: available={} active={}",
+            host.hardware_available(),
+            host.hardware_active()
+        );
+        if !host.hardware_active() {
+            anyhow::bail!(
+                "requested OpenGL hardware rendering but no hardware frames were produced"
+            );
+        }
+    }
 
     let state = ch.save_state()?;
     println!("save state size: {}", state.len());
@@ -196,6 +233,21 @@ fn run_selftest(
     std::fs::write(&tmp, &state)?;
     ch.load_state_from(&tmp)?;
     println!("state round-trip ok");
+
+    if hardware {
+        host.hardware_active
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        ch.unload_game()?;
+        ch.load_game(None, &[port, None])?;
+        for _ in 0..10 {
+            ch.run_frame();
+        }
+        if !host.hardware_active() {
+            anyhow::bail!("hardware renderer did not survive a game reload");
+        }
+        println!("hardware reload ok");
+    }
+
     ch.save_memory_card();
     ch.shutdown();
     println!("selftest ok");

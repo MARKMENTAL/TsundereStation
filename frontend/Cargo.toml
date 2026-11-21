@@ -1,6 +1,6 @@
 [package]
 name = "tsunderestation"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 description = "A small egui/libretro frontend for the SwanStation core"
 license = "GPL-3.0-or-later"
@@ -20,7 +20,9 @@ eframe = { version = "0.35", default-features = false, features = [
 ] }
 encoding_rs = "0.8"
 env_logger = "0.11"
+glow = "0.17"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
+khronos-egl = { version = "6", features = ["dynamic"] }
 libloading = "0.9"
 log = "0.4"
 minimp3 = "0.6"

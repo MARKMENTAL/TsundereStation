@@ -89,6 +89,7 @@ pub struct CoreHost {
     host: Arc<HostState>,
     game: Option<PathBuf>,
     loaded: bool,
+    shutdown_done: bool,
     port_devices: [Option<u32>; crate::libretro::input::PORTS],
     core_info: CoreInfo,
 }
@@ -140,6 +141,7 @@ impl CoreHost {
                 host,
                 game: None,
                 loaded: false,
+                shutdown_done: false,
                 port_devices: [None; crate::libretro::input::PORTS],
                 core_info,
             })
@@ -356,9 +358,20 @@ impl CoreHost {
     }
 
     pub fn shutdown(&mut self) {
+        if self.shutdown_done {
+            return;
+        }
+        self.shutdown_done = true;
+        crate::libretro::hardware::release_context(self.loaded);
         let _ = self.unload_game();
         unsafe { (self.api.retro_deinit)() };
         self.host.clear_disk_control();
+    }
+}
+
+impl Drop for CoreHost {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 

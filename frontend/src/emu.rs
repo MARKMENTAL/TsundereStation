@@ -44,6 +44,7 @@ pub enum WorkerEvent {
 pub struct WorkerHandle {
     tx: Sender<Command>,
     events: Receiver<WorkerEvent>,
+    startup: Option<Receiver<()>>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -56,11 +57,20 @@ impl WorkerHandle {
     ) -> Self {
         let (tx, rx) = mpsc::channel::<Command>();
         let (event_tx, events) = mpsc::channel::<WorkerEvent>();
+        let (startup_tx, startup) = mpsc::channel::<()>();
 
         let join = thread::Builder::new()
             .name("tsunderestation-core".to_string())
             .spawn(move || {
-                let result = run_worker(core_path, host, saved_options, state_dir, rx, &event_tx);
+                let result = run_worker(
+                    core_path,
+                    host,
+                    saved_options,
+                    state_dir,
+                    rx,
+                    &event_tx,
+                    startup_tx,
+                );
                 if let Err(e) = result {
                     log::error!("core worker failed: {e:#}");
                     let _ = event_tx.send(WorkerEvent::Error(format!("{e:#}")));
@@ -72,7 +82,20 @@ impl WorkerHandle {
         Self {
             tx,
             events,
+            startup: Some(startup),
             join: Some(join),
+        }
+    }
+
+    /// Wait until the worker has prepared its headless GL context. The UI must
+    /// not create eframe's GL context before this point.
+    pub fn wait_for_startup(&mut self, max: Duration) {
+        let Some(startup) = self.startup.take() else {
+            return;
+        };
+        match startup.recv_timeout(max) {
+            Ok(()) => log::info!("core worker startup complete"),
+            Err(e) => log::warn!("core worker startup wait failed: {e}"),
         }
     }
 
@@ -201,7 +224,12 @@ fn run_worker(
     state_dir: PathBuf,
     rx: Receiver<Command>,
     events: &Sender<WorkerEvent>,
+    startup: Sender<()>,
 ) -> Result<()> {
+    // Prepare the worker's EGL context before eframe creates the UI context.
+    crate::libretro::hardware::prepare_on_worker();
+    let _ = startup.send(());
+
     let mut core = CoreHost::new(&core_path, host.clone(), &saved_options)?;
     let _ = events.send(WorkerEvent::Ready(core.info().clone()));
 

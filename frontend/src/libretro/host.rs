@@ -1,5 +1,6 @@
 use crate::libretro::audio::AudioRing;
 use crate::libretro::ffi;
+use crate::libretro::hardware;
 use crate::libretro::input::InputShared;
 use crate::libretro::video::VideoMailbox;
 use std::collections::{HashMap, VecDeque};
@@ -102,7 +103,20 @@ impl OptionStore {
 
     pub fn current(&self, key: &str) -> Option<String> {
         if key == "swanstation_GPU_Renderer" {
-            return Some("Software".to_string());
+            let value = self
+                .overrides
+                .get(key)
+                .cloned()
+                .or_else(|| self.def(key).map(|d| d.default.clone()))
+                .unwrap_or_else(|| "Auto".to_string());
+            return Some(match value.as_str() {
+                "OpenGL" | "Software" => value,
+                _ => "Auto".to_string(),
+            });
+        }
+        if key == "swanstation_GPU_ResolutionScale" {
+            // The headless FBO/readback path is native-resolution in 0.3.0.
+            return Some("1".to_string());
         }
         if let Some(v) = self.overrides.get(key) {
             return Some(v.clone());
@@ -149,6 +163,10 @@ pub struct HostState {
 
     pub shutdown: AtomicBool,
     pub fast_forward: AtomicBool,
+    /// Set after a headless EGL/OpenGL context and FBO are ready.
+    pub hardware_available: AtomicBool,
+    /// Set once the core has actually delivered a hardware-rendered frame.
+    pub hardware_active: AtomicBool,
     /// Core-reported nominal refresh rate, used for frame pacing.
     pub fps_bits: AtomicU64,
     /// Monotonic count of frames actually run by the emulation worker.
@@ -182,6 +200,8 @@ impl HostState {
             controller_ports: Mutex::new(Vec::new()),
             shutdown: AtomicBool::new(false),
             fast_forward: AtomicBool::new(false),
+            hardware_available: AtomicBool::new(false),
+            hardware_active: AtomicBool::new(false),
             fps_bits: AtomicU64::new(60.0f64.to_bits()),
             emulated_frames: AtomicU64::new(0),
             base_width: AtomicU32::new(320),
@@ -199,6 +219,14 @@ impl HostState {
 
     pub fn emulated_frames(&self) -> u64 {
         self.emulated_frames.load(Ordering::Relaxed)
+    }
+
+    pub fn hardware_available(&self) -> bool {
+        self.hardware_available.load(Ordering::Relaxed)
+    }
+
+    pub fn hardware_active(&self) -> bool {
+        self.hardware_active.load(Ordering::Relaxed)
     }
 
     pub fn notify(&self, text: impl Into<String>, kind: MessageKind, ttl: Duration) {
@@ -422,7 +450,17 @@ impl HostState {
                 if data.is_null() {
                     return false;
                 }
-                *(data as *mut c_uint) = 0;
+                let renderer = self
+                    .options
+                    .read()
+                    .unwrap()
+                    .current("swanstation_GPU_Renderer")
+                    .unwrap_or_else(|| "Auto".to_string());
+                *(data as *mut c_uint) = if renderer == "Software" {
+                    ffi::RETRO_HW_CONTEXT_NONE
+                } else {
+                    ffi::RETRO_HW_CONTEXT_OPENGL_CORE
+                };
                 true
             }
             ffi::RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO => {
@@ -504,7 +542,22 @@ impl HostState {
                 *(data as *mut c_uint) = 1;
                 true
             }
-            ffi::RETRO_ENVIRONMENT_SET_HW_RENDER => false,
+            ffi::RETRO_ENVIRONMENT_SET_HW_RENDER => {
+                if data.is_null() {
+                    return false;
+                }
+                let renderer = self
+                    .options
+                    .read()
+                    .unwrap()
+                    .current("swanstation_GPU_Renderer")
+                    .unwrap_or_else(|| "Auto".to_string());
+                if renderer == "Software" {
+                    return false;
+                }
+                let callback = &mut *(data as *mut ffi::retro_hw_render_callback);
+                hardware::set_hw_render(callback, self)
+            }
             ffi::RETRO_ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER => false,
             ffi::RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE => {
                 if data.is_null() {
@@ -664,7 +717,7 @@ impl HostState {
                 } else {
                     cstr(d.category_key)
                 };
-                let default = if d.default_value.is_null() {
+                let mut default = if d.default_value.is_null() {
                     String::new()
                 } else {
                     cstr(d.default_value)
@@ -682,6 +735,22 @@ impl HostState {
                         cstr(v.label)
                     };
                     values.push((value, vlabel));
+                }
+                // The frontend only implements the software renderer and the
+                // headless OpenGL renderer. Hide Vulkan/D3D choices so the
+                // settings UI cannot select a backend that will immediately
+                // fall back.
+                if key == "swanstation_GPU_Renderer" {
+                    values.retain(|(value, _)| {
+                        matches!(value.as_str(), "Auto" | "OpenGL" | "Software")
+                    });
+                    if !values.iter().any(|(value, _)| value == &default) {
+                        default = "Auto".to_string();
+                    }
+                }
+                if key == "swanstation_GPU_ResolutionScale" {
+                    values.retain(|(value, _)| value == "1");
+                    default = "1".to_string();
                 }
                 let index = store.defs.len();
                 store.by_key.insert(key.clone(), index);
@@ -745,6 +814,10 @@ pub extern "C" fn environment_callback(cmd: c_uint, data: *mut c_void) -> bool {
 }
 
 pub extern "C" fn video_refresh(data: *const c_void, width: c_uint, height: c_uint, pitch: usize) {
+    if hardware::is_hardware_frame(data) {
+        hardware::read_frame(width, height);
+        return;
+    }
     if let Some(host) = HOST.get() {
         unsafe { host.video.push(data, width, height, pitch) };
     }
@@ -807,4 +880,74 @@ pub extern "C" fn rumble_callback(port: c_uint, effect: c_int, strength: u16) ->
     }
     host.rumble_generation[port].fetch_add(1, Ordering::Relaxed);
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn store_with_options() -> OptionStore {
+        let mut store = OptionStore::default();
+        for (key, default, values) in [
+            (
+                "swanstation_GPU_Renderer",
+                "Auto",
+                vec!["Auto", "OpenGL", "Software"],
+            ),
+            ("swanstation_GPU_ResolutionScale", "1", vec!["1", "2", "4"]),
+        ] {
+            let index = store.defs.len();
+            store.by_key.insert(key.to_string(), index);
+            store.defs.push(CoreOptionDef {
+                key: key.to_string(),
+                label: key.to_string(),
+                info: String::new(),
+                category_key: String::new(),
+                values: values
+                    .into_iter()
+                    .map(|value| (value.to_string(), value.to_string()))
+                    .collect(),
+                default: default.to_string(),
+            });
+        }
+        store
+    }
+
+    #[test]
+    fn unsupported_renderer_falls_back_to_auto() {
+        let mut store = store_with_options();
+        store
+            .overrides
+            .insert("swanstation_GPU_Renderer".into(), "Vulkan".into());
+        assert_eq!(
+            store.current("swanstation_GPU_Renderer").as_deref(),
+            Some("Auto")
+        );
+    }
+
+    #[test]
+    fn supported_renderer_values_are_preserved() {
+        let mut store = store_with_options();
+        for value in ["OpenGL", "Software"] {
+            store
+                .overrides
+                .insert("swanstation_GPU_Renderer".into(), value.into());
+            assert_eq!(
+                store.current("swanstation_GPU_Renderer").as_deref(),
+                Some(value)
+            );
+        }
+    }
+
+    #[test]
+    fn hardware_resolution_scale_is_forced_to_one() {
+        let mut store = store_with_options();
+        store
+            .overrides
+            .insert("swanstation_GPU_ResolutionScale".into(), "4".into());
+        assert_eq!(
+            store.current("swanstation_GPU_ResolutionScale").as_deref(),
+            Some("1")
+        );
+    }
 }

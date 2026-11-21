@@ -12,7 +12,7 @@ use crate::splash::{self, SplashAudio};
 use crate::theme::{self, Theme, UiTheme};
 use crate::tv_ui::{controller_hint, tv_row};
 use eframe::egui;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -196,7 +196,7 @@ impl App {
         cc: &eframe::CreationContext<'_>,
         mut config: Config,
         host: Arc<HostState>,
-        core_path: PathBuf,
+        worker: WorkerHandle,
         auto_start: bool,
         auto_boot_bios: bool,
         splash_override: Option<bool>,
@@ -252,12 +252,6 @@ impl App {
         }
 
         let fullscreen = config.fullscreen;
-        let worker = WorkerHandle::spawn(
-            core_path,
-            host.clone(),
-            config.core_options.clone(),
-            config.state_dir.clone(),
-        );
 
         let port_devices = [config.port1_device, config.port2_device];
         let splash_seconds = config.splash_seconds;
@@ -1676,6 +1670,11 @@ impl App {
                 .load(std::sync::atomic::Ordering::Relaxed);
             let status = if self.config.show_fps {
                 let mut info = self.fps.display();
+                info.push_str(if self.host.hardware_active() {
+                    " · HW"
+                } else {
+                    " · SW"
+                });
                 if self.paused {
                     info.push_str(" · paused");
                 }
@@ -1860,7 +1859,20 @@ impl App {
                         if ui.button("Restart core").clicked() {
                             restart_core = true;
                         }
-                        ui.weak("Renderer: Software");
+                        let selected = self
+                            .host
+                            .option_value("swanstation_GPU_Renderer")
+                            .unwrap_or_else(|| "Auto".to_string());
+                        let active = if selected == "Software" {
+                            "Software"
+                        } else if self.host.hardware_active() {
+                            "OpenGL (hardware)"
+                        } else if self.host.hardware_available() {
+                            "OpenGL ready (waiting for frame)"
+                        } else {
+                            "Software (OpenGL unavailable)"
+                        };
+                        ui.weak(format!("Renderer: {active} · selected {selected}"));
                     }
                 });
                 if self.settings_category == "appearance" {
@@ -1978,7 +1990,7 @@ impl App {
                                     .spacing([16.0, 8.0])
                                     .show(ui, |ui| {
                                         for option in &options {
-                                            if option.key == "swanstation_GPU_Renderer" {
+                                            if option.key == "swanstation_GPU_ResolutionScale" {
                                                 continue;
                                             }
                                             if !visible.get(&option.key).copied().unwrap_or(true) {
@@ -2015,7 +2027,8 @@ impl App {
                                                 .unwrap_or(current.as_str());
                                             let restart = option.label.contains("Restart")
                                                 || option.info.contains("Restart")
-                                                || option.info.contains("restart");
+                                                || option.info.contains("restart")
+                                                || option.key == "swanstation_GPU_Renderer";
                                             ui.vertical(|ui| {
                                                 ui.set_min_width(380.0);
                                                 ui.label(

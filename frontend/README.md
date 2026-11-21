@@ -122,7 +122,8 @@ These are direct `F12` screenshots from TsundereStation.
 - Standalone native front-end for the SwanStation libretro core.
 - TV/controller-first launcher, file browser and pause menu.
 - Mouse/keyboard settings, controller configuration, save states and themes.
-- Linux only; software rendering for now.
+- Hardware OpenGL rendering with automatic software fallback.
+- Linux x86_64 and aarch64 AppImages.
 
 Not in scope: Discord integration, RetroAchievements, accounts, cloud saves,
 telemetry, or other online service integrations.
@@ -177,6 +178,9 @@ Useful flags:
 # Headless smoke test: boot BIOS, run frames, save/load state, dump a frame
 ./target/release/tsunderestation --selftest
 
+# Also exercise the headless EGL/OpenGL hardware path
+./target/release/tsunderestation --selftest-hw
+
 # Show the frontend version
 ./target/release/tsunderestation --version
 ```
@@ -189,7 +193,8 @@ config file controls the duration.
 The FPS/status overlay is hidden by default. Toggle it in-game with `F3`, from
 the pause menu, or with the “Show FPS/status overlay” checkbox in the launcher.
 It reports measured emulation frames per second, not the core’s nominal refresh
-rate, so frame pacing problems and fast-forward are visible. Pausing keeps the
+rate, so frame pacing problems and fast-forward are visible. The suffix shows
+`HW` for hardware rendering or `SW` for the software renderer. Pausing keeps the
 last measured value on screen.
 
 Press `F12` or use **Take screenshot (F12)** in the pause menu to save a JPEG
@@ -449,6 +454,25 @@ for the controller (or launch the frontend outside Steam). SDL's HIDAPI driver i
 enabled by the frontend; if the controller is not detected, check hidraw/udev
 permissions.
 
+## Rendering
+
+Settings → Enhancement → **GPU Renderer** offers:
+
+- **Auto** — use OpenGL hardware rendering when a headless EGL context can be
+  created, otherwise fall back to the software renderer.
+- **OpenGL** — require hardware OpenGL and fall back to software if it is
+  unavailable.
+- **Software** — always use the software renderer.
+
+Hardware rendering currently uses a headless EGL context and a 1024×1024 FBO,
+then reads the finished frame back into the normal UI texture path. It is fixed
+at 1× native PS1 resolution in this release. The FPS/status overlay appends
+`HW` or `SW` so the active path is visible.
+
+The AppImage deliberately leaves `libEGL`, `libGL`, X11/Wayland and Mesa/GBM/DRM
+libraries to the host. Bundling those breaks graphics initialization on some
+systems, including Asahi Linux.
+
 ## Desktop install
 
 The `install.sh` helper installs the frontend, the desktop entry, the icon, and
@@ -472,8 +496,9 @@ core next to the executable, in the current directory, in
 
 ## Current limitations
 
-- Software renderer only. Hardware OpenGL/Vulkan rendering, internal-resolution
-  upscaling and PGXP are not wired up yet.
+- Hardware rendering is OpenGL-only and fixed at 1× native resolution in this
+  release. Vulkan/D3D, internal-resolution upscaling and PGXP are not wired up
+  yet. Software rendering remains available as a fallback.
 - Two controllers map to SwanStation ports 1 and 2; multitap is not exposed.
 - Multi-disc swapping requires an `.m3u` playlist; single-file images expose one
   image only.

@@ -118,9 +118,21 @@ impl VideoMailbox {
             }
         }
 
+        self.publish(w, h, rgba);
+    }
+
+    /// Publish an already-converted RGBA frame, used by the hardware renderer.
+    pub fn push_rgba(&self, width: usize, height: usize, rgba: Vec<u8>) {
+        if width == 0 || height == 0 || rgba.len() < width * height * 4 {
+            return;
+        }
+        self.publish(width, height, rgba);
+    }
+
+    fn publish(&self, width: usize, height: usize, rgba: Vec<u8>) {
         *self.frame.lock().unwrap() = Some(Arc::new(Frame {
-            width: w,
-            height: h,
+            width,
+            height,
             rgba,
         }));
         self.seq.fetch_add(1, Ordering::Release);
