@@ -197,32 +197,58 @@ under `~/.local/share/tsunderestation/screenshots`. Files are named
 `gamename-YYYYMMDDHHMMSS.jpg` using local time, with `-1`, `-2`, … added if two
 screenshots land in the same second.
 
-## AppImage (AMD64)
+## AppImage (x86_64 and aarch64)
 
 A local AppImage build script is included:
 
 ```sh
-./packaging/build-appimage.sh
+./packaging/build-appimage.sh                 # native x86_64
+./packaging/build-appimage.sh --arch aarch64  # cross-compiled aarch64
+./packaging/build-appimage.sh --arch all      # both
 ```
 
 It builds the core and frontend, downloads the AppImage tools into
-`packaging/tools/`, creates `dist/AppDir`, and produces:
+`packaging/tools/`, and produces:
 
 - `dist/TsundereStation-<version>-x86_64.AppImage`
+- `dist/TsundereStation-<version>-aarch64.AppImage`
 - `dist/TsundereStation-x86_64.AppImage` (stable symlink)
+- `dist/TsundereStation-aarch64.AppImage` (stable symlink)
 - `dist/TsundereStation-v<version>-SHA256SUMS.txt`
 - `dist/TsundereStation-v<version>-release.md`
 
-The AppImage bundles `swanstation_libretro.so`, the desktop file, the icon, the
-license, and a source note, so no separate core installation is needed.
+The x86_64 build uses linuxdeploy. The aarch64 build is cross-compiled with
+`aarch64-linux-gnu-gcc` and packaged with a manually assembled AppDir, because
+linuxdeploy cannot cross-deploy. Both AppImages bundle
+`swanstation_libretro.so`, the desktop file, the icon, the license and a source
+note, so no separate core installation is needed.
 
-The release draft contains the suggested `v<version>` tag, download name,
-SHA-256, verification instructions, requirements, release highlights and a
-manual GitHub upload checklist. Highlights come from
+The aarch64 AppImage intentionally leaves the host graphics and audio stack
+alone — `libEGL`, `libGL`, `libX11`, `libxcb`, `libwayland-client`, `libgbm`,
+`libdrm`, `libexpat` and ALSA. Bundling Debian copies of those breaks Mesa/EGL
+on distros such as Asahi Linux.
+
+For aarch64 cross-builds, install the cross toolchain, arm64 SDL2 runtime and
+Rust target first:
+
+```sh
+sudo dpkg --add-architecture arm64
+sudo apt update
+sudo apt install g++-aarch64-linux-gnu libc6-dev-arm64-cross \
+    libsdl2-2.0-0:arm64
+rustup target add aarch64-unknown-linux-gnu
+```
+
+The aarch64 AppImage selftest runs through `qemu-aarch64-static`; install
+`qemu-user-static` if it is missing, or pass `--no-test`.
+
+The release draft contains the suggested `v<version>` tag, download names,
+SHA-256 values, verification instructions, requirements, release highlights and
+a manual GitHub upload checklist. Highlights come from
 `packaging/release-notes/v<version>.md`; edit that file before rebuilding if a
 version needs different notes.
 
-Verify a downloaded build from the directory containing both files:
+Verify downloaded builds from the directory containing the artifacts:
 
 ```sh
 cd dist
@@ -233,6 +259,7 @@ Expected:
 
 ```text
 TsundereStation-<version>-x86_64.AppImage: OK
+TsundereStation-<version>-aarch64.AppImage: OK
 ```
 
 Current builds target **Debian 13 / glibc 2.41 or newer**. Build on an older
@@ -243,25 +270,27 @@ now; a future Debian 13 Forgejo Runner can reuse the script with
 Useful options:
 
 ```sh
-# Reuse already-built binaries
-./packaging/build-appimage.sh --skip-build
+# Build only one architecture
+./packaging/build-appimage.sh --arch x86_64
+./packaging/build-appimage.sh --arch aarch64
 
-# Build without running the AppImage selftest
-./packaging/build-appimage.sh --no-test
+# Reuse already-built binaries
+./packaging/build-appimage.sh --arch all --skip-build
+
+# Build without running the AppImage selftests
+./packaging/build-appimage.sh --arch all --no-test
 ```
 
-Run the result:
+Run the result that matches your machine:
 
 ```sh
 chmod +x dist/TsundereStation-x86_64.AppImage
 ./dist/TsundereStation-x86_64.AppImage
 ```
 
-AppImage type 2 requires FUSE2 on some systems. If FUSE is unavailable, run:
-
-```sh
-./dist/TsundereStation-x86_64.AppImage --appimage-extract-and-run
-```
+On ARM64, use `dist/TsundereStation-aarch64.AppImage` instead. AppImage type 2
+requires FUSE2 on some systems. If FUSE is unavailable, run with
+`--appimage-extract-and-run`.
 
 Optional desktop integration is provided by tools such as AppImageLauncher; the
 AppImage itself runs standalone. The app’s config, BIOS, saves and states still

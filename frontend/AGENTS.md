@@ -44,7 +44,8 @@ launcher platform.
   generated. Do not hand-edit them.
 - `frontend/assets/` contains embedded assets: themes, logo, desktop icon and
   splash audio.
-- `frontend/packaging/` contains the desktop entry and AppImage build script.
+- `frontend/packaging/` contains the desktop entry, AppImage build script and
+  aarch64 runtime-library collector.
 
 ## Build and test
 
@@ -80,16 +81,30 @@ Run the headless smoke test:
 It boots BIOS-only content, runs frames, checks video/audio and round-trips a
 save state. It does not need a display.
 
-Build the AppImage:
+Build the AppImages:
 
 ```sh
-./packaging/build-appimage.sh
-./packaging/build-appimage.sh --skip-build   # reuse existing binaries
-./packaging/build-appimage.sh --no-test      # skip the AppImage selftest
+./packaging/build-appimage.sh                    # native x86_64
+./packaging/build-appimage.sh --arch aarch64     # cross-compiled aarch64
+./packaging/build-appimage.sh --arch all         # both
+./packaging/build-appimage.sh --arch all --skip-build   # reuse binaries
+./packaging/build-appimage.sh --arch all --no-test      # skip selftests
 ```
 
-The AppImage is a local Debian 13 / glibc 2.41 build. There is no AppImage CI
-yet. The build script runs the packaged binary's `--selftest` unless disabled.
+The AppImages are local Debian 13 / glibc 2.41 builds. There is no AppImage CI
+yet. The build script runs each packaged binary's `--selftest` unless disabled.
+
+The aarch64 cross build needs `g++-aarch64-linux-gnu`,
+`libc6-dev-arm64-cross`, arm64 SDL2 runtime libraries, the
+`aarch64-unknown-linux-gnu` Rust target, and `qemu-aarch64-static` for the
+selftest. linuxdeploy cannot cross-deploy, so the aarch64 AppDir is assembled
+manually and packaged with `appimagetool`; keep
+`packaging/collect-aarch64-libs.py` in sync with its runtime dependencies.
+
+The aarch64 AppImage must leave the host graphics/audio stack alone. Do not
+bundle `libEGL`, `libGL`, `libX11`, `libxcb`, `libwayland-client`, `libgbm`,
+`libdrm`, `libexpat` or `libasound`; Debian copies of those break Mesa/EGL on
+distros such as Asahi Linux. `build-appimage.sh` enforces this after collection.
 
 After a successful build, the script also writes:
 
@@ -108,12 +123,13 @@ is missing, it emits a placeholder. Do not hand-edit generated files in
   explicitly asked.
 - Do not rename the AppImage major/minor path casually. Rebuild the existing
   version in place for fixes.
-- After rebuilding, report the new SHA256 of
-  `dist/TsundereStation-0.2.1-x86_64.AppImage`.
+- After rebuilding, report the new SHA256 of both
+  `dist/TsundereStation-0.2.1-x86_64.AppImage` and
+  `dist/TsundereStation-0.2.1-aarch64.AppImage`.
 - Generated release files use tag `v<version>`, e.g.
   `TsundereStation-v0.2.1-SHA256SUMS.txt` and
-  `TsundereStation-v0.2.1-release.md`. Upload the AppImage and checksum file
-  manually; paste the release draft as GitHub release notes.
+  `TsundereStation-v0.2.1-release.md`. Upload both AppImages and the checksum
+  file manually; paste the release draft as GitHub release notes.
 - Documentation-only changes do not require rebuilding the AppImage.
 
 ## Source map
@@ -136,6 +152,8 @@ is missing, it emits a placeholder. Do not hand-edit generated files in
 | `assets/tsunderestation.png` | Desktop icon and README logo. |
 | `assets/tsunderestation-logo.jpg` | Splash/logo source image. |
 | `assets/tsunderestation-splash.mp3` | Embedded splash motif. |
+| `packaging/build-appimage.sh` | Architecture-aware AppImage build and release metadata. |
+| `packaging/collect-aarch64-libs.py` | Recursively copies the aarch64 runtime library closure into the cross-built AppDir. |
 | `packaging/release-template.md` | Release-draft template. |
 | `packaging/release-notes/` | Per-version release highlights. |
 | `readme-screenshots/` | README-only UI/game screenshots; not embedded or packaged. |
@@ -493,11 +511,12 @@ Visual checklist for UI changes:
 - F12 and pause-menu screenshot actions write the expected JPG path/name.
 - A multi-disc `.m3u` shows the disc picker; a single-disc image shows no swap row.
 
-For AppImage changes, build the AppImage and run its selftest:
+For AppImage changes, build both architectures and run their selftests:
 
 ```sh
-./packaging/build-appimage.sh --skip-build
+./packaging/build-appimage.sh --arch all --skip-build
 sha256sum dist/TsundereStation-0.2.1-x86_64.AppImage
+sha256sum dist/TsundereStation-0.2.1-aarch64.AppImage
 ```
 
 ## Change checklist

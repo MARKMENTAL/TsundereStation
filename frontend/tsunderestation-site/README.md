@@ -24,9 +24,11 @@ deploys as plain static files.
   - `launcher.png`, `pause-menu.png`, `settings.png` from `../readme-screenshots/`
   - `evangelion-1.jpg`, `evangelion-2.jpg`, `wwf-1.jpg`, `wwf-2.jpg` from the
     same screenshot collection
-- `downloads/TsundereStation-0.2.1-x86_64.AppImage` — current AppImage, copied
-  from `../dist/`. This exact file is listed in `../.gitignore`; it is not
-  committed. Copy it here before previewing/deploying the download link.
+- `downloads/TsundereStation-0.2.1-x86_64.AppImage` — current x86_64 AppImage,
+  copied from `../dist/`. Download artifacts are gitignored; copy them here
+  before previewing/deploying the download links.
+- `downloads/TsundereStation-0.2.1-aarch64.AppImage` — current aarch64 AppImage,
+  copied from `../dist/`. Also gitignored and copied manually.
 - `downloads/README.md` — reminder for the download artifact workflow.
 
 ## Preview
@@ -44,10 +46,12 @@ Open the printed `http://localhost:8000` URL. Check a wide viewport and
 
 When a new AppImage is built:
 
-1. Copy the artifact into `downloads/`:
+1. Copy both artifacts into `downloads/`:
 
    ```sh
    cp dist/TsundereStation-<version>-x86_64.AppImage \
+       tsunderestation-site/downloads/
+   cp dist/TsundereStation-<version>-aarch64.AppImage \
        tsunderestation-site/downloads/
    ```
 
@@ -73,8 +77,9 @@ release checklist.
 ## Deployment
 
 Deploy the entire `tsunderestation-site/` directory as static files. The
-download artifact is ignored by Git, so a deploy from a fresh checkout must copy
-`TsundereStation-<version>-x86_64.AppImage` into `downloads/` first.
+download artifacts are ignored by Git, so a deploy from a fresh checkout must
+copy both `TsundereStation-<version>-x86_64.AppImage` and
+`TsundereStation-<version>-aarch64.AppImage` into `downloads/` first.
 
 No server-side code, analytics, cookies or external asset hosts are required
 apart from the Alpine.js CDN. If the site must work fully offline, vendor Alpine

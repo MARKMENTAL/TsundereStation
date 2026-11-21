@@ -243,9 +243,10 @@ figcaption { margin: .55rem .2rem .1rem; color: var(--muted); font-size: .82rem;
 .cards code { color: var(--gold); }
 
 /* Download */
+.download-list { display: grid; gap: 1rem; margin-top: 1.5rem; }
 .download-card {
   display: grid; grid-template-columns: 1.25fr .9fr; gap: 1.5rem;
-  margin-top: 1.5rem; padding: 1.4rem; border: 1px solid var(--border);
+  padding: 1.4rem; border: 1px solid var(--border);
   border-radius: var(--radius); background:
     linear-gradient(135deg, rgba(246, 157, 200, .08), transparent 42%),
     var(--surface);

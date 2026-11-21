@@ -2,12 +2,12 @@
 
 ## Downloads
 
-- `{{ARTIFACT}}` — Linux x86_64
+{{DOWNLOADS}}
 
 ## SHA-256
 
 ```text
-{{SHA256}}  {{ARTIFACT}}
+{{CHECKSUMS}}
 ```
 
 Verify:
@@ -19,12 +19,12 @@ sha256sum -c {{CHECKSUM}}
 Expected:
 
 ```text
-{{ARTIFACT}}: OK
+{{EXPECTED}}
 ```
 
 ## Requirements
 
-- Linux x86_64
+- Linux x86_64 or aarch64
 - {{GLIBC_REQUIREMENT}}
 - FUSE2 for direct AppImage execution, or run with `--appimage-extract-and-run`
 
@@ -43,7 +43,6 @@ Expected:
 Release checklist:
 - Tag: {{TAG}}
 - Release title: TsundereStation {{TAG}}
-- Upload: {{ARTIFACT}}
-- Upload: {{CHECKSUM}}
+{{UPLOADS}}
 - Paste this file as the GitHub release notes.
 -->

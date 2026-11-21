@@ -60,7 +60,7 @@
             <a class="btn btn-secondary" href="#screenshots">See screenshots</a>
           </div>
           <p class="alt-link">Prefer the source? <a href="https://github.com/MARKMENTAL/TsundereStation" target="_blank" rel="noopener">View on GitHub →</a></p>
-          <p class="meta">GPL-3.0-or-later · Linux x86_64 · AppImage · standalone libretro</p>
+          <p class="meta">GPL-3.0-or-later · Linux x86_64 / aarch64 · AppImage · standalone libretro</p>
         </div>
         <div class="hero-visual">
           <div class="window">
@@ -84,7 +84,7 @@
         <div><strong>Standalone</strong><span>loads the libretro core directly</span></div>
         <div><strong>39 themes</strong><span>JAPS1ME default + external themes</span></div>
         <div><strong>Memory cards</strong><span>.srm / .mcd / DexDrive .gme</span></div>
-        <div><strong>Linux x86_64</strong><span>AppImage, glibc 2.41+</span></div>
+        <div><strong>Linux x86_64 + ARM64</strong><span>AppImage, glibc 2.41+</span></div>
       </div>
     </section>
 
@@ -173,25 +173,47 @@
     <section id="download" class="section">
       <div class="wrap">
         <h2>Download</h2>
-        <p class="section-sub">Linux x86_64 AppImage. The current build is v0.2.1.</p>
-        <div class="download-card">
-          <div class="download-main">
-            <span class="badge">Linux x86_64</span>
-            <h3>TsundereStation v0.2.1</h3>
-            <p><code>TsundereStation-0.2.1-x86_64.AppImage</code> · 15 MB</p>
-            <div class="download-actions">
-              <a class="btn btn-primary" href="downloads/TsundereStation-0.2.1-x86_64.AppImage" download>Download AppImage</a>
-              <a class="btn btn-secondary" href="https://github.com/MARKMENTAL/TsundereStation/releases/tag/v0.2.1" target="_blank" rel="noopener">Release notes</a>
+        <p class="section-sub">Linux x86_64 and aarch64 AppImages. The current build is v0.2.1.</p>
+        <div class="download-list">
+          <div class="download-card">
+            <div class="download-main">
+              <span class="badge">Linux x86_64</span>
+              <h3>TsundereStation v0.2.1</h3>
+              <p><code>TsundereStation-0.2.1-x86_64.AppImage</code> · 15 MB</p>
+              <div class="download-actions">
+                <a class="btn btn-primary" href="downloads/TsundereStation-0.2.1-x86_64.AppImage" download>Download AppImage</a>
+                <a class="btn btn-secondary" href="https://github.com/MARKMENTAL/TsundereStation/releases/tag/v0.2.1" target="_blank" rel="noopener">Release notes</a>
+              </div>
+              <p class="fine-print">Built on Debian 13. Requires glibc 2.41 or newer. If FUSE2 is unavailable, run with <code>--appimage-extract-and-run</code>.</p>
             </div>
-            <p class="fine-print">Built on Debian 13. Requires glibc 2.41 or newer. If FUSE2 is unavailable, run with <code>--appimage-extract-and-run</code>.</p>
+            <div class="checksum" x-data="{ copied: false }">
+              <p class="label">SHA-256</p>
+              <div class="code-row">
+                <code>253c9b70600e3f02a1d47094fe98057286618709c5ab6d70e7612f4b37742ab1</code>
+                <button type="button" @click="navigator.clipboard.writeText('253c9b70600e3f02a1d47094fe98057286618709c5ab6d70e7612f4b37742ab1').then(() => { copied = true; setTimeout(() => copied = false, 1500); })" x-text="copied ? 'Copied!' : 'Copy'"></button>
+              </div>
+              <p class="verify">Verify: <code>sha256sum TsundereStation-0.2.1-x86_64.AppImage</code></p>
+            </div>
           </div>
-          <div class="checksum" x-data="{ copied: false }">
-            <p class="label">SHA-256</p>
-            <div class="code-row">
-              <code>77b2e93f943278b4463915b78d6dcf28b1de11ed27706c2c6084eb165fc47e7c</code>
-              <button type="button" @click="navigator.clipboard.writeText('77b2e93f943278b4463915b78d6dcf28b1de11ed27706c2c6084eb165fc47e7c').then(() => { copied = true; setTimeout(() => copied = false, 1500); })" x-text="copied ? 'Copied!' : 'Copy'"></button>
+          <div class="download-card">
+            <div class="download-main">
+              <span class="badge">Linux ARM64 / aarch64</span>
+              <h3>TsundereStation v0.2.1</h3>
+              <p><code>TsundereStation-0.2.1-aarch64.AppImage</code> · 15 MB</p>
+              <div class="download-actions">
+                <a class="btn btn-primary" href="downloads/TsundereStation-0.2.1-aarch64.AppImage" download>Download AppImage</a>
+                <a class="btn btn-secondary" href="https://github.com/MARKMENTAL/TsundereStation/releases/tag/v0.2.1" target="_blank" rel="noopener">Release notes</a>
+              </div>
+              <p class="fine-print">Built on Debian 13. Requires glibc 2.41 or newer. If FUSE2 is unavailable, run with <code>--appimage-extract-and-run</code>.</p>
             </div>
-            <p class="verify">Verify: <code>sha256sum TsundereStation-0.2.1-x86_64.AppImage</code></p>
+            <div class="checksum" x-data="{ copied: false }">
+              <p class="label">SHA-256</p>
+              <div class="code-row">
+                <code>a26790ff2492e799d8986f2db22124d7f3162c6066c7c811729827c189b5fdb0</code>
+                <button type="button" @click="navigator.clipboard.writeText('a26790ff2492e799d8986f2db22124d7f3162c6066c7c811729827c189b5fdb0').then(() => { copied = true; setTimeout(() => copied = false, 1500); })" x-text="copied ? 'Copied!' : 'Copy'"></button>
+              </div>
+              <p class="verify">Verify: <code>sha256sum TsundereStation-0.2.1-aarch64.AppImage</code></p>
+            </div>
           </div>
         </div>
       </div>
@@ -205,14 +227,19 @@
           <article class="start-card" x-data="{ copied: false }">
             <h3>Use the AppImage</h3>
             <ol class="steps">
-              <li>Download the AppImage above.</li>
+              <li>Download the AppImage for your architecture above.</li>
               <li>Make it executable and run it.</li>
               <li>Add a BIOS image if you have one, or let the core use OpenBIOS.</li>
             </ol>
             <div class="term">
-              <div class="term-bar"><span>run the AppImage</span><button type="button" @click="navigator.clipboard.writeText('chmod +x TsundereStation-0.2.1-x86_64.AppImage\\n./TsundereStation-0.2.1-x86_64.AppImage').then(() => { copied = true; setTimeout(() => copied = false, 1500); })" x-text="copied ? 'Copied!' : 'Copy'"></button></div>
-              <pre><code>chmod +x TsundereStation-0.2.1-x86_64.AppImage
-./TsundereStation-0.2.1-x86_64.AppImage</code></pre>
+              <div class="term-bar"><span>run the AppImage</span><button type="button" @click="navigator.clipboard.writeText('# x86_64\\nchmod +x TsundereStation-0.2.1-x86_64.AppImage\\n./TsundereStation-0.2.1-x86_64.AppImage\\n\\n# aarch64\\nchmod +x TsundereStation-0.2.1-aarch64.AppImage\\n./TsundereStation-0.2.1-aarch64.AppImage').then(() => { copied = true; setTimeout(() => copied = false, 1500); })" x-text="copied ? 'Copied!' : 'Copy'"></button></div>
+              <pre><code># x86_64
+chmod +x TsundereStation-0.2.1-x86_64.AppImage
+./TsundereStation-0.2.1-x86_64.AppImage
+
+# aarch64
+chmod +x TsundereStation-0.2.1-aarch64.AppImage
+./TsundereStation-0.2.1-aarch64.AppImage</code></pre>
             </div>
           </article>
           <article class="start-card" x-data="{ copied: false }">
