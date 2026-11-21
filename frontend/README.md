@@ -404,7 +404,7 @@ Controller navigation:
 - File browser: D-pad/left stick moves, Cross opens/chooses, Circle closes
 - In the pause menu: D-pad/left stick moves, Cross selects, Circle/PS closes
 - Settings: D-pad/left stick moves through categories and options, Right/Cross enters the content pane, Left/Right changes values, Circle backs out or closes
-- Memory Card Manager: D-pad/left stick moves through tabs, card/save lists and actions, LB/RB switches Local/Import, Cross selects, Circle backs out or closes
+- Memory Card Manager: Up/Down walks cards, saves and then the action buttons; Left/Right switches the card list and details; LB/RB switches Local/Import; Cross selects, Circle backs out or closes
 - Controller page: controller input is ignored; use the Back button with mouse or keyboard
 - Keyboard equivalents: arrow keys move, `Enter` selects, `Esc` closes, PageUp/PageDown switch Memory Card tabs
 - Player 1 drives the launcher and menus. Player 2 is game-only and does not navigate the UI.

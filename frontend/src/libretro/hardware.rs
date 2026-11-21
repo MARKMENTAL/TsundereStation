@@ -230,6 +230,27 @@ impl Hardware {
             .map_err(|e| anyhow!("making the EGL context current: {e}"))
     }
 
+    /// Make sure the worker context is current, tolerating a transient
+    /// `eglMakeCurrent` failure after a core teardown. Returns true when a
+    /// fresh make-current call was needed.
+    fn ensure_current(&self) -> Result<bool> {
+        if self.egl.get_current_context() == Some(self.context) {
+            log::debug!("hardware: EGL context is already current");
+            return Ok(false);
+        }
+        match self.make_current() {
+            Ok(()) => Ok(true),
+            Err(first) => {
+                log::warn!(
+                    "hardware: could not make the EGL context current ({first:#}); retrying"
+                );
+                let _ = self.egl.make_current(self.display, None, None, None);
+                self.make_current()?;
+                Ok(true)
+            }
+        }
+    }
+
     fn read_rgba(&self, width: u32, height: u32) -> Result<(usize, usize, Vec<u8>)> {
         if width == 0 || height == 0 || width > FBO_WIDTH || height > FBO_HEIGHT {
             return Err(anyhow!(
@@ -380,7 +401,7 @@ pub fn set_hw_render(
                 .ok_or_else(|| anyhow!("the EGL context was not prepared before the UI started"))?;
             hardware.context_destroy = cb.context_destroy;
             hardware
-                .make_current()
+                .ensure_current()
                 .context("restoring the worker EGL context")?;
             Ok(())
         })
@@ -388,7 +409,7 @@ pub fn set_hw_render(
     .unwrap_or_else(|_| Err(anyhow!("an EGL/OpenGL operation panicked")));
 
     if let Err(e) = result {
-        log::warn!("Could not use OpenGL hardware rendering: {e:#}");
+        log::warn!("Could not use OpenGL hardware rendering (requested {requested}): {e:#}");
         if lock_software(host) {
             host.notify(
                 "OpenGL hardware rendering unavailable; using software rendering",
@@ -495,33 +516,21 @@ pub fn release_context(core_is_loaded: bool) {
 
     // Keep the EGL context/FBO alive on the worker for the next core load.
     // It was prepared before eframe started and must not be recreated while
-    // the UI GL context is live.
-    let available = HARDWARE.with(|slot| {
+    // the UI GL context is live. A failure here is a teardown hiccup, not a
+    // renderer negotiation failure: do not lock software or show the user a
+    // warning. The next core load retries the handoff in `set_hw_render`.
+    HARDWARE.with(|slot| {
         let mut slot = slot.borrow_mut();
         if let Some(hardware) = slot.as_mut() {
             hardware.context_destroy = None;
-            match hardware.make_current() {
-                Ok(()) => true,
-                Err(e) => {
-                    log::warn!("Could not restore the worker EGL context: {e:#}");
-                    false
-                }
+            if let Err(e) = hardware.ensure_current() {
+                log::warn!(
+                    "hardware: could not restore the EGL context during core teardown: {e:#}; \
+                     the next core load will retry"
+                );
             }
-        } else {
-            false
         }
     });
-
-    if let Some(host) = HOST.get() {
-        host.hardware_available.store(available, Ordering::Relaxed);
-        if !available && lock_software(host) {
-            host.notify(
-                "OpenGL hardware rendering unavailable; using software rendering",
-                MessageKind::Warning,
-                Duration::from_secs(5),
-            );
-        }
-    }
 }
 
 pub fn is_hardware_frame(data: *const c_void) -> bool {

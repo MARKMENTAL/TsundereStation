@@ -230,6 +230,11 @@ OpenGL can reuse it without violating that startup ordering.
 software frames clear it. Do not clear it during renderer negotiation or core
 shutdown; a fresh core may legitimately show `SW` for a few boot frames.
 
+Teardown-time `eglMakeCurrent` failures are not renderer negotiation failures.
+`release_context` must log and leave the policy alone; `set_hw_render` retries
+the handoff with `ensure_current` and only locks software plus shows the warning
+when the new core genuinely cannot get a hardware context.
+
 ### Game shader
 
 `src/shader.rs` applies a built-in GLSL post-processing stack to the game
@@ -604,8 +609,9 @@ Visual checklist for UI changes:
 - Settings → Video shows Off/Soft CRT/Blurpi-inspired/Royale-inspired; the
   shader affects only the game image and leaves menus/FPS/toasts sharp.
 - Controller focus rings move through Settings categories/options/Video and
-  Memory Card Manager tabs/lists/actions; Cancel backs out and Guide closes the
-  page. The Controller page ignores controller input entirely.
+  Memory Card Manager toolbar/tabs/cards/details; Down from the last save
+  enters the detail action buttons. Cancel backs out and Guide closes the page.
+  The Controller page ignores controller input entirely.
 - LB/RB switches Memory Card Local/Import tabs; Import/Delete/Export are
   focusable even when disabled.
 - Settings sidebar shows Console, Graphics, Display, Ports and Advanced.

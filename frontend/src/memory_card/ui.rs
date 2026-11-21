@@ -42,10 +42,10 @@ enum SourceAction {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FocusPane {
+    Toolbar,
     Tabs,
     Cards,
-    Saves,
-    Actions,
+    Details,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -256,14 +256,19 @@ impl MemoryCardManager {
                 Tab::Local => Tab::Import,
                 Tab::Import => Tab::Local,
             };
-            self.focus_index = 0;
+            self.focus_index = if self.focus_pane == FocusPane::Tabs {
+                self.tab_index()
+            } else {
+                0
+            };
             return false;
         }
 
-        let list_len = match self.tab {
+        let card_rows = match self.tab {
             Tab::Local => self.cards.len(),
             Tab::Import => self.source_cards.len(),
         };
+        let cards_len = 1 + card_rows;
         let saves_len = match self.tab {
             Tab::Local => self
                 .loaded
@@ -276,120 +281,127 @@ impl MemoryCardManager {
                 .map(|card| card.summary.saves.len())
                 .unwrap_or(0),
         };
-        let actions_len = self.action_list().len();
+        let detail_actions = self.detail_actions();
+        let details_len = saves_len + detail_actions.len();
+        let toolbar = self.toolbar_actions();
 
         match self.focus_pane {
+            FocusPane::Toolbar => match nav {
+                NavAction::Left => {
+                    self.focus_index = (self.focus_index + toolbar.len() - 1) % toolbar.len();
+                }
+                NavAction::Right => {
+                    self.focus_index = (self.focus_index + 1) % toolbar.len();
+                }
+                NavAction::Up | NavAction::Down => {
+                    self.focus_pane = FocusPane::Tabs;
+                    self.focus_index = self.tab_index();
+                }
+                NavAction::Confirm => {
+                    if let Some(action) = toolbar.get(self.focus_index).copied() {
+                        self.execute_card_action(action);
+                    }
+                }
+                NavAction::Cancel => {
+                    self.focus_pane = FocusPane::Tabs;
+                    self.focus_index = self.tab_index();
+                }
+                NavAction::PrevTab | NavAction::NextTab => {}
+            },
             FocusPane::Tabs => match nav {
                 NavAction::Left | NavAction::Right => {
                     self.tab = match self.tab {
                         Tab::Local => Tab::Import,
                         Tab::Import => Tab::Local,
                     };
-                    self.focus_index = 0;
+                    self.focus_index = self.tab_index();
                 }
                 NavAction::Down | NavAction::Confirm => {
                     self.focus_pane = FocusPane::Cards;
                     self.focus_index = 0;
                 }
+                NavAction::Up => {
+                    self.focus_pane = FocusPane::Toolbar;
+                    self.focus_index = 0;
+                }
                 NavAction::Cancel => return true,
-                NavAction::Up | NavAction::PrevTab | NavAction::NextTab => {}
+                NavAction::PrevTab | NavAction::NextTab => {}
             },
             FocusPane::Cards => match nav {
                 NavAction::Up => {
-                    if list_len > 0 {
-                        self.focus_index = (self.focus_index + list_len - 1) % list_len;
-                    }
+                    self.focus_index = (self.focus_index + cards_len - 1) % cards_len;
                 }
                 NavAction::Down => {
-                    if list_len > 0 {
-                        self.focus_index = (self.focus_index + 1) % list_len;
-                    }
-                }
-                NavAction::Confirm => match self.tab {
-                    Tab::Local => self.select_local(self.focus_index),
-                    Tab::Import => self.select_source(self.focus_index),
-                },
-                NavAction::Right => {
-                    self.focus_pane = FocusPane::Saves;
-                    self.focus_index = 0;
-                }
-                NavAction::Left => {
-                    self.focus_pane = FocusPane::Tabs;
-                    self.focus_index = 0;
-                }
-                NavAction::Cancel => {
-                    self.focus_pane = FocusPane::Tabs;
-                    self.focus_index = 0;
-                }
-                NavAction::PrevTab | NavAction::NextTab => {}
-            },
-            FocusPane::Saves => match nav {
-                NavAction::Up => {
-                    if saves_len > 0 {
-                        self.focus_index = (self.focus_index + saves_len - 1) % saves_len;
-                    }
-                }
-                NavAction::Down => {
-                    if saves_len > 0 {
-                        self.focus_index = (self.focus_index + 1) % saves_len;
-                    }
+                    self.focus_index = (self.focus_index + 1) % cards_len;
                 }
                 NavAction::Confirm => {
-                    if self.tab == Tab::Local {
-                        self.selected_save = Some(self.focus_index);
-                        if let Some(save) = self
-                            .loaded
-                            .as_ref()
-                            .and_then(|card| card.summary.saves.get(self.focus_index))
-                        {
-                            self.icon_name = default_icon_name(save);
-                        }
+                    if self.focus_index == 0 {
+                        self.execute_card_action(match self.tab {
+                            Tab::Local => CardAction::OpenCard,
+                            Tab::Import => CardAction::OpenSourceCard,
+                        });
                     } else {
-                        self.source_save_selected = Some(self.focus_index);
+                        let index = self.focus_index - 1;
+                        match self.tab {
+                            Tab::Local => self.select_local(index),
+                            Tab::Import => self.select_source(index),
+                        }
                     }
                 }
-                NavAction::Left => {
-                    self.focus_pane = FocusPane::Cards;
+                NavAction::Right => {
+                    self.focus_pane = FocusPane::Details;
                     self.focus_index = 0;
                 }
-                NavAction::Right => {
-                    self.focus_pane = FocusPane::Actions;
-                    self.focus_index = 0;
+                NavAction::Left => {
+                    self.focus_pane = FocusPane::Tabs;
+                    self.focus_index = self.tab_index();
                 }
                 NavAction::Cancel => {
-                    self.focus_pane = FocusPane::Cards;
-                    self.focus_index = 0;
+                    self.focus_pane = FocusPane::Tabs;
+                    self.focus_index = self.tab_index();
                 }
                 NavAction::PrevTab | NavAction::NextTab => {}
             },
-            FocusPane::Actions => match nav {
+            FocusPane::Details => match nav {
                 NavAction::Up => {
-                    if actions_len > 0 {
-                        self.focus_index = (self.focus_index + actions_len - 1) % actions_len;
+                    if details_len > 0 {
+                        self.focus_index = (self.focus_index + details_len - 1) % details_len;
                     }
                 }
                 NavAction::Down => {
-                    if actions_len > 0 {
-                        self.focus_index = (self.focus_index + 1) % actions_len;
+                    if details_len > 0 {
+                        self.focus_index = (self.focus_index + 1) % details_len;
                     }
                 }
                 NavAction::Confirm => {
-                    if let Some(action) = self.action_list().get(self.focus_index).copied() {
+                    if self.focus_index < saves_len {
+                        if self.tab == Tab::Local {
+                            self.selected_save = Some(self.focus_index);
+                            if let Some(save) = self
+                                .loaded
+                                .as_ref()
+                                .and_then(|card| card.summary.saves.get(self.focus_index))
+                            {
+                                self.icon_name = default_icon_name(save);
+                            }
+                        } else {
+                            self.source_save_selected = Some(self.focus_index);
+                        }
+                    } else if let Some(action) =
+                        detail_actions.get(self.focus_index - saves_len).copied()
+                    {
                         if self.action_enabled(action) {
                             self.execute_card_action(action);
                         }
                     }
                 }
                 NavAction::Left => {
-                    self.focus_pane = FocusPane::Saves;
+                    self.focus_pane = FocusPane::Cards;
                     self.focus_index = 0;
                 }
-                NavAction::Right => {
-                    self.focus_pane = FocusPane::Tabs;
-                    self.focus_index = 0;
-                }
+                NavAction::Right => {}
                 NavAction::Cancel => {
-                    self.focus_pane = FocusPane::Saves;
+                    self.focus_pane = FocusPane::Cards;
                     self.focus_index = 0;
                 }
                 NavAction::PrevTab | NavAction::NextTab => {}
@@ -398,17 +410,27 @@ impl MemoryCardManager {
         false
     }
 
-    fn action_list(&self) -> Vec<CardAction> {
-        let mut actions = vec![
+    fn tab_index(&self) -> usize {
+        match self.tab {
+            Tab::Local => 0,
+            Tab::Import => 1,
+        }
+    }
+
+    fn toolbar_actions(&self) -> [CardAction; 5] {
+        [
             CardAction::OpenFolder,
             CardAction::Refresh,
             CardAction::Scan,
             CardAction::DuckStation,
             CardAction::RetroArch,
-        ];
+        ]
+    }
+
+    fn detail_actions(&self) -> Vec<CardAction> {
+        let mut actions = Vec::new();
         match self.tab {
             Tab::Local => {
-                actions.push(CardAction::OpenCard);
                 if let Some(card) = &self.loaded {
                     actions.push(CardAction::ImportSave);
                     if card.format == CardFormat::Gme {
@@ -422,7 +444,6 @@ impl MemoryCardManager {
                 }
             }
             Tab::Import => {
-                actions.push(CardAction::OpenSourceCard);
                 if self.source_loaded.is_some() {
                     actions.push(CardAction::CopyCard);
                     actions.push(CardAction::ImportSave);
@@ -493,21 +514,31 @@ impl MemoryCardManager {
         }
     }
 
-    fn focused_action(&self) -> Option<CardAction> {
-        self.action_list().get(self.focus_index).copied()
+    fn toolbar_focused(&self, action: CardAction) -> bool {
+        self.focus_pane == FocusPane::Toolbar
+            && self.toolbar_actions().get(self.focus_index) == Some(&action)
     }
 
-    fn focus_action(&mut self, action: CardAction) {
-        if let Some(index) = self.action_list().iter().position(|entry| *entry == action) {
-            self.focus_pane = FocusPane::Actions;
+    fn focus_toolbar(&mut self, action: CardAction) {
+        if let Some(index) = self
+            .toolbar_actions()
+            .iter()
+            .position(|entry| *entry == action)
+        {
+            self.focus_pane = FocusPane::Toolbar;
             self.focus_index = index;
         }
     }
 
-    fn set_action_focus(&mut self, actions: &[CardAction], action: CardAction) {
+    fn focus_detail_action(
+        &mut self,
+        actions: &[CardAction],
+        saves_len: usize,
+        action: CardAction,
+    ) {
         if let Some(index) = actions.iter().position(|entry| *entry == action) {
-            self.focus_pane = FocusPane::Actions;
-            self.focus_index = index;
+            self.focus_pane = FocusPane::Details;
+            self.focus_index = saves_len + index;
         }
     }
 
@@ -609,7 +640,6 @@ impl MemoryCardManager {
         let mut scan_source = false;
         let mut use_duckstation = false;
         let mut use_retroarch = false;
-        let focused_action = self.focused_action();
 
         ui.horizontal(|ui| {
             ui.label("Local cards:");
@@ -618,25 +648,23 @@ impl MemoryCardManager {
             action_focus(
                 ui,
                 &response,
-                self.focus_pane == FocusPane::Actions
-                    && focused_action == Some(CardAction::OpenFolder),
+                self.toolbar_focused(CardAction::OpenFolder),
                 theme,
             );
             if response.clicked() {
                 open_folder = true;
-                self.focus_action(CardAction::OpenFolder);
+                self.focus_toolbar(CardAction::OpenFolder);
             }
             let response = ui.button("Refresh");
             action_focus(
                 ui,
                 &response,
-                self.focus_pane == FocusPane::Actions
-                    && focused_action == Some(CardAction::Refresh),
+                self.toolbar_focused(CardAction::Refresh),
                 theme,
             );
             if response.clicked() {
                 refresh_local = true;
-                self.focus_action(CardAction::Refresh);
+                self.focus_toolbar(CardAction::Refresh);
             }
         });
         ui.horizontal(|ui| {
@@ -652,39 +680,32 @@ impl MemoryCardManager {
                 source_changed = true;
             }
             let response = ui.button("Scan");
-            focus_ring(
-                ui,
-                response.rect,
-                self.focus_pane == FocusPane::Actions && focused_action == Some(CardAction::Scan),
-                theme,
-            );
+            action_focus(ui, &response, self.toolbar_focused(CardAction::Scan), theme);
             if response.clicked() {
                 scan_source = true;
-                self.focus_action(CardAction::Scan);
+                self.focus_toolbar(CardAction::Scan);
             }
             let response = ui.button("DuckStation");
             action_focus(
                 ui,
                 &response,
-                self.focus_pane == FocusPane::Actions
-                    && focused_action == Some(CardAction::DuckStation),
+                self.toolbar_focused(CardAction::DuckStation),
                 theme,
             );
             if response.clicked() {
                 use_duckstation = true;
-                self.focus_action(CardAction::DuckStation);
+                self.focus_toolbar(CardAction::DuckStation);
             }
             let response = ui.button("RetroArch");
             action_focus(
                 ui,
                 &response,
-                self.focus_pane == FocusPane::Actions
-                    && focused_action == Some(CardAction::RetroArch),
+                self.toolbar_focused(CardAction::RetroArch),
                 theme,
             );
             if response.clicked() {
                 use_retroarch = true;
-                self.focus_action(CardAction::RetroArch);
+                self.focus_toolbar(CardAction::RetroArch);
             }
         });
 
@@ -750,17 +771,17 @@ impl MemoryCardManager {
 
     fn local_card_list(&mut self, ui: &mut egui::Ui, theme: &UiTheme) {
         ui.heading("Cards");
-        let focused_action = self.focused_action();
         let response = ui.button("Open card…");
         focus_ring(
             ui,
             response.rect,
-            self.focus_pane == FocusPane::Actions && focused_action == Some(CardAction::OpenCard),
+            self.focus_pane == FocusPane::Cards && self.focus_index == 0,
             theme,
         );
         if response.clicked() {
             self.start_browse(BrowsePurpose::OpenLocal);
-            self.focus_action(CardAction::OpenCard);
+            self.focus_pane = FocusPane::Cards;
+            self.focus_index = 0;
         }
         let rows: Vec<(usize, String, bool)> = self
             .cards
@@ -773,7 +794,8 @@ impl MemoryCardManager {
             .max_height((ui.available_height() - 50.0).max(220.0))
             .show(ui, |ui| {
                 for (index, label, selected) in rows {
-                    let focused = self.focus_pane == FocusPane::Cards && self.focus_index == index;
+                    let focused =
+                        self.focus_pane == FocusPane::Cards && self.focus_index == index + 1;
                     let response = ui.selectable_label(selected, label);
                     focus_ring(ui, response.rect, focused, theme);
                     if focused {
@@ -782,7 +804,7 @@ impl MemoryCardManager {
                     if response.clicked() {
                         self.select_local(index);
                         self.focus_pane = FocusPane::Cards;
-                        self.focus_index = index;
+                        self.focus_index = index + 1;
                     }
                 }
                 if self.cards.is_empty() {
@@ -792,8 +814,19 @@ impl MemoryCardManager {
     }
 
     fn local_details(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, theme: &UiTheme) {
-        let action_list = self.action_list();
-        let focused_action = action_list.get(self.focus_index).copied();
+        let detail_actions = self.detail_actions();
+        let saves_len = self
+            .loaded
+            .as_ref()
+            .map(|card| card.summary.saves.len())
+            .unwrap_or(0);
+        let focused_detail = if self.focus_pane == FocusPane::Details {
+            self.focus_index
+                .checked_sub(saves_len)
+                .and_then(|index| detail_actions.get(index).copied())
+        } else {
+            None
+        };
         let loaded = self.loaded.take();
         let mut action = None;
 
@@ -826,7 +859,7 @@ impl MemoryCardManager {
                     save.blocks,
                     if save.deleted { "  (deleted)" } else { "" }
                 );
-                let focused = self.focus_pane == FocusPane::Saves && self.focus_index == index;
+                let focused = self.focus_pane == FocusPane::Details && self.focus_index == index;
                 let response = ui.selectable_label(
                     self.selected_save == Some(index),
                     egui::RichText::new(label).monospace(),
@@ -837,7 +870,7 @@ impl MemoryCardManager {
                 }
                 if response.clicked() {
                     new_save = Some(index);
-                    self.focus_pane = FocusPane::Saves;
+                    self.focus_pane = FocusPane::Details;
                     self.focus_index = index;
                 }
             }
@@ -885,51 +918,51 @@ impl MemoryCardManager {
                 action_focus(
                     ui,
                     &response,
-                    self.focus_pane == FocusPane::Actions
-                        && focused_action == Some(CardAction::ImportSave),
+                    focused_detail == Some(CardAction::ImportSave),
                     theme,
                 );
                 if response.clicked() {
                     action = Some(LocalAction::ImportSourceBrowse);
-                    self.set_action_focus(&action_list, CardAction::ImportSave);
+                    self.focus_detail_action(&detail_actions, saves_len, CardAction::ImportSave);
                 }
                 if card.format == CardFormat::Gme {
                     let response = ui.button("Use as import source");
                     action_focus(
                         ui,
                         &response,
-                        self.focus_pane == FocusPane::Actions
-                            && focused_action == Some(CardAction::UseAsImportSource),
+                        focused_detail == Some(CardAction::UseAsImportSource),
                         theme,
                     );
                     if response.clicked() {
                         action = Some(LocalAction::UseAsImportSource);
-                        self.set_action_focus(&action_list, CardAction::UseAsImportSource);
+                        self.focus_detail_action(
+                            &detail_actions,
+                            saves_len,
+                            CardAction::UseAsImportSource,
+                        );
                     }
                 }
                 let response = ui.add_enabled(has_save && is_raw, egui::Button::new("Delete save"));
                 action_focus(
                     ui,
                     &response,
-                    self.focus_pane == FocusPane::Actions
-                        && focused_action == Some(CardAction::DeleteSave),
+                    focused_detail == Some(CardAction::DeleteSave),
                     theme,
                 );
                 if response.clicked() {
                     action = Some(LocalAction::Delete);
-                    self.set_action_focus(&action_list, CardAction::DeleteSave);
+                    self.focus_detail_action(&detail_actions, saves_len, CardAction::DeleteSave);
                 }
                 let response = ui.add_enabled(has_save, egui::Button::new("Export icon"));
                 action_focus(
                     ui,
                     &response,
-                    self.focus_pane == FocusPane::Actions
-                        && focused_action == Some(CardAction::ExportIcon),
+                    focused_detail == Some(CardAction::ExportIcon),
                     theme,
                 );
                 if response.clicked() {
                     action = Some(LocalAction::ExportIcon);
-                    self.set_action_focus(&action_list, CardAction::ExportIcon);
+                    self.focus_detail_action(&detail_actions, saves_len, CardAction::ExportIcon);
                 }
             });
 
@@ -947,13 +980,16 @@ impl MemoryCardManager {
                     action_focus(
                         ui,
                         &response,
-                        self.focus_pane == FocusPane::Actions
-                            && focused_action == Some(CardAction::ConvertGme),
+                        focused_detail == Some(CardAction::ConvertGme),
                         theme,
                     );
                     if response.clicked() {
                         action = Some(LocalAction::Convert);
-                        self.set_action_focus(&action_list, CardAction::ConvertGme);
+                        self.focus_detail_action(
+                            &detail_actions,
+                            saves_len,
+                            CardAction::ConvertGme,
+                        );
                     }
                 });
                 ui.weak(
@@ -1040,18 +1076,17 @@ impl MemoryCardManager {
 
     fn source_card_list(&mut self, ui: &mut egui::Ui, theme: &UiTheme) {
         ui.heading("Source cards");
-        let focused_action = self.focused_action();
         let response = ui.button("Open source card…");
-        action_focus(
+        focus_ring(
             ui,
-            &response,
-            self.focus_pane == FocusPane::Actions
-                && focused_action == Some(CardAction::OpenSourceCard),
+            response.rect,
+            self.focus_pane == FocusPane::Cards && self.focus_index == 0,
             theme,
         );
         if response.clicked() {
             self.start_browse(BrowsePurpose::ImportSource);
-            self.focus_action(CardAction::OpenSourceCard);
+            self.focus_pane = FocusPane::Cards;
+            self.focus_index = 0;
         }
         let rows: Vec<(usize, String, bool)> = self
             .source_cards
@@ -1064,7 +1099,8 @@ impl MemoryCardManager {
             .max_height((ui.available_height() - 50.0).max(220.0))
             .show(ui, |ui| {
                 for (index, label, selected) in rows {
-                    let focused = self.focus_pane == FocusPane::Cards && self.focus_index == index;
+                    let focused =
+                        self.focus_pane == FocusPane::Cards && self.focus_index == index + 1;
                     let response = ui.selectable_label(selected, label);
                     focus_ring(ui, response.rect, focused, theme);
                     if focused {
@@ -1073,7 +1109,7 @@ impl MemoryCardManager {
                     if response.clicked() {
                         self.select_source(index);
                         self.focus_pane = FocusPane::Cards;
-                        self.focus_index = index;
+                        self.focus_index = index + 1;
                     }
                 }
                 if self.source_cards.is_empty() {
@@ -1083,8 +1119,19 @@ impl MemoryCardManager {
     }
 
     fn source_details(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, theme: &UiTheme) {
-        let action_list = self.action_list();
-        let focused_action = action_list.get(self.focus_index).copied();
+        let detail_actions = self.detail_actions();
+        let saves_len = self
+            .source_loaded
+            .as_ref()
+            .map(|card| card.summary.saves.len())
+            .unwrap_or(0);
+        let focused_detail = if self.focus_pane == FocusPane::Details {
+            self.focus_index
+                .checked_sub(saves_len)
+                .and_then(|index| detail_actions.get(index).copied())
+        } else {
+            None
+        };
         let source = self.source_loaded.take();
         let mut action = None;
 
@@ -1128,13 +1175,12 @@ impl MemoryCardManager {
                 action_focus(
                     ui,
                     &response,
-                    self.focus_pane == FocusPane::Actions
-                        && focused_action == Some(CardAction::CopyCard),
+                    focused_detail == Some(CardAction::CopyCard),
                     theme,
                 );
                 if response.clicked() {
                     action = Some(SourceAction::CopyCard);
-                    self.set_action_focus(&action_list, CardAction::CopyCard);
+                    self.focus_detail_action(&detail_actions, saves_len, CardAction::CopyCard);
                 }
             });
             if is_multi_disc(&self.copy_name) {
@@ -1155,7 +1201,7 @@ impl MemoryCardManager {
                     save.blocks,
                     if save.deleted { "  (deleted)" } else { "" }
                 );
-                let focused = self.focus_pane == FocusPane::Saves && self.focus_index == index;
+                let focused = self.focus_pane == FocusPane::Details && self.focus_index == index;
                 let response = ui.selectable_label(
                     self.source_save_selected == Some(index),
                     egui::RichText::new(label).monospace(),
@@ -1166,7 +1212,7 @@ impl MemoryCardManager {
                 }
                 if response.clicked() {
                     new_save = Some(index);
-                    self.focus_pane = FocusPane::Saves;
+                    self.focus_pane = FocusPane::Details;
                     self.focus_index = index;
                 }
             }
@@ -1210,13 +1256,12 @@ impl MemoryCardManager {
             action_focus(
                 ui,
                 &response,
-                self.focus_pane == FocusPane::Actions
-                    && focused_action == Some(CardAction::ImportSave),
+                focused_detail == Some(CardAction::ImportSave),
                 theme,
             );
             if response.clicked() {
                 action = Some(SourceAction::ImportSave);
-                self.set_action_focus(&action_list, CardAction::ImportSave);
+                self.focus_detail_action(&detail_actions, saves_len, CardAction::ImportSave);
             }
             if target_is_raw {
                 ui.weak("Change the target on the Local cards tab.");
@@ -1970,15 +2015,18 @@ mod tests {
         assert_eq!(manager.focus_pane, FocusPane::Cards);
 
         manager.navigate(NavAction::Right);
-        assert_eq!(manager.focus_pane, FocusPane::Saves);
-        manager.navigate(NavAction::Right);
-        assert_eq!(manager.focus_pane, FocusPane::Actions);
-        manager.navigate(NavAction::Right);
-        assert_eq!(manager.focus_pane, FocusPane::Tabs);
-
-        manager.navigate(NavAction::Down);
+        assert_eq!(manager.focus_pane, FocusPane::Details);
+        manager.navigate(NavAction::Left);
         assert_eq!(manager.focus_pane, FocusPane::Cards);
         manager.navigate(NavAction::Left);
+        assert_eq!(manager.focus_pane, FocusPane::Tabs);
+        manager.navigate(NavAction::Up);
+        assert_eq!(manager.focus_pane, FocusPane::Toolbar);
+        manager.navigate(NavAction::Down);
+        assert_eq!(manager.focus_pane, FocusPane::Tabs);
+        manager.navigate(NavAction::Down);
+        assert_eq!(manager.focus_pane, FocusPane::Cards);
+        manager.navigate(NavAction::Cancel);
         assert_eq!(manager.focus_pane, FocusPane::Tabs);
         assert!(manager.navigate(NavAction::Cancel));
     }
