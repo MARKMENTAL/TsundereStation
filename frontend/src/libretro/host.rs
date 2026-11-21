@@ -115,7 +115,7 @@ impl OptionStore {
             });
         }
         if key == "swanstation_GPU_ResolutionScale" {
-            // The headless FBO/readback path is native-resolution in 0.3.0.
+            // The headless FBO/readback path renders at native resolution.
             return Some("1".to_string());
         }
         if let Some(v) = self.overrides.get(key) {

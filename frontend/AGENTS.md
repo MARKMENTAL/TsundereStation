@@ -127,17 +127,17 @@ is missing, it emits a placeholder. Do not hand-edit generated files in
 
 ## Version and artifact policy
 
-- Current version: **0.3.0**.
+- Current version: **0.3.1**.
 - Do not bump the version for ordinary fixes or documentation changes unless
   explicitly asked.
 - Do not rename the AppImage major/minor path casually. Rebuild the existing
   version in place for fixes.
 - After rebuilding, report the new SHA256 of both
-  `dist/TsundereStation-0.3.0-x86_64.AppImage` and
-  `dist/TsundereStation-0.3.0-aarch64.AppImage`.
+  `dist/TsundereStation-0.3.1-x86_64.AppImage` and
+  `dist/TsundereStation-0.3.1-aarch64.AppImage`.
 - Generated release files use tag `v<version>`, e.g.
-  `TsundereStation-v0.3.0-SHA256SUMS.txt` and
-  `TsundereStation-v0.3.0-release.md`. Upload both AppImages and the checksum
+  `TsundereStation-v0.3.1-SHA256SUMS.txt` and
+  `TsundereStation-v0.3.1-release.md`. Upload both AppImages and the checksum
   file manually; paste the release draft as GitHub release notes.
 - Documentation-only changes do not require rebuilding the AppImage.
 
@@ -155,6 +155,7 @@ is missing, it emits a placeholder. Do not hand-edit generated files in
 | `src/emu.rs` | Emulation worker thread, commands, save states, memory cards and disc swaps. |
 | `src/sdl_input.rs` | SDL controller discovery, player slots, per-port mapping, rumble, navigation and shared audio callback. |
 | `src/libretro/hardware.rs` | Headless EGL/OpenGL context, FBO readback, renderer fallback and worker startup preparation. |
+| `src/shader.rs` | Game-view CRT/bloom shader presets, GL programs/FBOs and the egui paint callback. |
 | `src/splash.rs` | Embedded logo/motif decoding and window icon. |
 | `src/screenshot.rs` | JPEG screenshot naming and encoding. |
 | `src/libretro/` | Hand-written libretro ABI, core loader, host callbacks, video/audio/input handoff. |
@@ -213,6 +214,32 @@ values are filtered out and old config values fall back to Auto. If EGL/OpenGL
 setup fails, `SET_HW_RENDER` returns false and the core uses the software
 renderer. Keep the AppImage free of bundled `libEGL`, `libGL`, X11/Wayland,
 GBM/DRM and ALSA libraries; those must come from the host.
+
+### Game shader
+
+`src/shader.rs` applies a built-in GLSL post-processing stack to the game
+texture in the UI's egui/glow paint callback. It must stay out of menus and
+overlays:
+
+- bright-pass downsample into a half-resolution bloom texture,
+- separable horizontal/vertical Gaussian blur,
+- CRT composite with curvature, bloom, scanlines, aperture mask and vignette.
+
+UV origins are not uniform: the game texture comes from egui and is **top-left**
+origin, while the bloom FBO textures use OpenGL's **bottom-left** origin. Flip V
+only when sampling `u_game`; keep the bloom and screen-space CRT effects on the
+unflipped UV. Flipping the shared `v_uv` instead fixes the game image but
+misaligns the bloom vertically.
+
+The shader state lives behind an `Arc<Mutex<ShaderState>>`; GL resources are
+created lazily in the paint callback when the UI context is current. If
+compilation or FBO setup fails, fall back to the normal `ui.image` path and show
+the error in Settings → Video.
+
+Settings presets are built-in approximations inspired by CRT Royale and Blurpi.
+Do not describe them as exact ports or add a `.glslp`/`.slangp` parser without an
+explicit request. The shader is applied after the game frame is available, so it
+works with both the software and hardware renderers.
 
 ## UI and product decisions
 
@@ -545,6 +572,8 @@ Visual checklist for UI changes:
   Software shows `SW` after a core restart.
 - Disabling EGL/OpenGL causes a clean software fallback with a warning rather
   than a crash.
+- Settings → Video shows Off/Soft CRT/Blurpi-inspired/Royale-inspired; the
+  shader affects only the game image and leaves menus/FPS/toasts sharp.
 - Toast text on info/warning/error backgrounds.
 - Memory Card Manager: launcher entry, local card list, save list and icon preview.
 - `.gme` warning and conversion, DuckStation card copy, duplicate import confirmation, delete confirmation and icon export.
@@ -555,8 +584,8 @@ For AppImage changes, build both architectures and run their selftests:
 
 ```sh
 ./packaging/build-appimage.sh --arch all --skip-build
-sha256sum dist/TsundereStation-0.3.0-x86_64.AppImage
-sha256sum dist/TsundereStation-0.3.0-aarch64.AppImage
+sha256sum dist/TsundereStation-0.3.1-x86_64.AppImage
+sha256sum dist/TsundereStation-0.3.1-aarch64.AppImage
 ```
 
 ## Change checklist
@@ -589,6 +618,9 @@ affiliated with or endorsed by any anime or game rights holders.
 - Hardware rendering is OpenGL-only and fixed at 1× native resolution.
   Vulkan/D3D, upscaling and PGXP are not wired up. Software rendering remains
   available as a fallback.
+- CRT/bloom shader presets are built-in approximations inspired by CRT Royale
+  and Blurpi, not full shader-pack ports. External `.glslp`/`.slangp` presets
+  are not supported.
 - Two controllers mapped to ports 1 and 2; multitap is not exposed.
 - Multi-disc swapping requires an `.m3u` playlist; single-file images expose one
   image only.

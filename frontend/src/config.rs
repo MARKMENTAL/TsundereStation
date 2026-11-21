@@ -46,6 +46,12 @@ pub struct Config {
     pub splash_seconds: f32,
     pub show_fps: bool,
     pub theme: String,
+    pub shader_preset: String,
+    pub shader_bloom: f32,
+    pub shader_scanlines: f32,
+    pub shader_curvature: f32,
+    pub shader_mask: f32,
+    pub shader_vignette: f32,
     pub input: InputConfig,
     pub core_options: BTreeMap<String, String>,
 }
@@ -70,6 +76,12 @@ impl Default for Config {
             splash_seconds: 4.0,
             show_fps: false,
             theme: "JAPS1ME".to_string(),
+            shader_preset: "off".to_string(),
+            shader_bloom: 0.55,
+            shader_scanlines: 0.35,
+            shader_curvature: 0.035,
+            shader_mask: 0.25,
+            shader_vignette: 0.20,
             input: InputConfig::default(),
             core_options: BTreeMap::new(),
         }
@@ -303,6 +315,9 @@ mod tests {
         assert_eq!(config.port1_device, Some(258));
         assert!(config.controller_guid_p2.is_empty());
         assert_eq!(config.port2_device, None);
+        assert_eq!(config.shader_preset, "off");
+        assert_eq!(config.shader_bloom, 0.55);
+        assert_eq!(config.shader_scanlines, 0.35);
     }
 
     #[test]
@@ -321,5 +336,26 @@ mod tests {
         assert_eq!(parsed.controller_guid_p2, "p2-guid");
         assert_eq!(parsed.port1_device, Some(258));
         assert_eq!(parsed.port2_device, Some(261));
+    }
+
+    #[test]
+    fn shader_fields_roundtrip() {
+        let config = Config {
+            shader_preset: "royale".into(),
+            shader_bloom: 0.8,
+            shader_scanlines: 0.5,
+            shader_curvature: 0.1,
+            shader_mask: 0.4,
+            shader_vignette: 0.3,
+            ..Config::default()
+        };
+        let text = toml::to_string(&config).expect("serialize config");
+        let parsed: Config = toml::from_str(&text).expect("parse config");
+        assert_eq!(parsed.shader_preset, "royale");
+        assert_eq!(parsed.shader_bloom, 0.8);
+        assert_eq!(parsed.shader_scanlines, 0.5);
+        assert_eq!(parsed.shader_curvature, 0.1);
+        assert_eq!(parsed.shader_mask, 0.4);
+        assert_eq!(parsed.shader_vignette, 0.3);
     }
 }

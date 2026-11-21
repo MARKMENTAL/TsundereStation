@@ -24,10 +24,10 @@ deploys as plain static files.
   - `launcher.png`, `pause-menu.png`, `settings.png` from `../readme-screenshots/`
   - `evangelion-1.jpg`, `evangelion-2.jpg`, `wwf-1.jpg`, `wwf-2.jpg` from the
     same screenshot collection
-- `downloads/TsundereStation-0.3.0-x86_64.AppImage` — current x86_64 AppImage,
+- `downloads/TsundereStation-0.3.1-x86_64.AppImage` — current x86_64 AppImage,
   copied from `../dist/`. Download artifacts are gitignored; copy them here
   before previewing/deploying the download links.
-- `downloads/TsundereStation-0.3.0-aarch64.AppImage` — current aarch64 AppImage,
+- `downloads/TsundereStation-0.3.1-aarch64.AppImage` — current aarch64 AppImage,
   copied from `../dist/`. Also gitignored and copied manually.
 - `downloads/README.md` — reminder for the download artifact workflow.
 

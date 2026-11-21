@@ -123,6 +123,7 @@ These are direct `F12` screenshots from TsundereStation.
 - TV/controller-first launcher, file browser and pause menu.
 - Mouse/keyboard settings, controller configuration, save states and themes.
 - Hardware OpenGL rendering with automatic software fallback.
+- Built-in CRT/bloom shader presets for the game view.
 - Linux x86_64 and aarch64 AppImages.
 
 Not in scope: Discord integration, RetroAchievements, accounts, cloud saves,
@@ -473,6 +474,21 @@ The AppImage deliberately leaves `libEGL`, `libGL`, X11/Wayland and Mesa/GBM/DRM
 libraries to the host. Bundling those breaks graphics initialization on some
 systems, including Asahi Linux.
 
+### Game shader
+
+Settings → **Video** controls optional post-processing for the game view:
+
+- **Off** — sharp native pixels (default).
+- **Soft CRT** — balanced bloom, scanlines, slight curvature and aperture mask.
+- **Blurpi-inspired** — stronger soft bloom, minimal curvature, light scanlines.
+- **CRT Royale-inspired** — stronger mask/curvature and scanlines.
+
+Bloom, scanlines, curvature, aperture mask and vignette each have their own
+slider. Presets are built-in approximations inspired by those shader packs; the
+frontend does not load external `.glslp`/`.slangp` presets. The shader applies to
+both the software and hardware renderers, while menus, FPS text, pause overlay
+and toasts stay sharp.
+
 ## Desktop install
 
 The `install.sh` helper installs the frontend, the desktop entry, the icon, and
@@ -499,6 +515,8 @@ core next to the executable, in the current directory, in
 - Hardware rendering is OpenGL-only and fixed at 1× native resolution in this
   release. Vulkan/D3D, internal-resolution upscaling and PGXP are not wired up
   yet. Software rendering remains available as a fallback.
+- The built-in CRT shader presets are inspired approximations, not full CRT
+  Royale or Blurpi shader-pack ports. External shader presets are not supported.
 - Two controllers map to SwanStation ports 1 and 2; multitap is not exposed.
 - Multi-disc swapping requires an `.m3u` playlist; single-file images expose one
   image only.

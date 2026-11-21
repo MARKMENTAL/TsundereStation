@@ -6,6 +6,7 @@ mod libretro;
 mod memory_card;
 mod screenshot;
 mod sdl_input;
+mod shader;
 mod splash;
 mod theme;
 mod tv_ui;

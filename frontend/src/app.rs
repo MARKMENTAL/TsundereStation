@@ -8,6 +8,7 @@ use crate::libretro::loader::{state_path, CoreInfo};
 use crate::memory_card::MemoryCardManager;
 use crate::screenshot;
 use crate::sdl_input::{ControllerEntry, NavAction, SdlState};
+use crate::shader::{ShaderPreset, ShaderSettings, ShaderState};
 use crate::splash::{self, SplashAudio};
 use crate::theme::{self, Theme, UiTheme};
 use crate::tv_ui::{controller_hint, tv_row};
@@ -164,6 +165,7 @@ pub struct App {
     memory_card: MemoryCardManager,
     quick_slot: u32,
     fps: FpsMeter,
+    shader: Arc<Mutex<ShaderState>>,
 
     texture: Option<egui::TextureHandle>,
     texture_seq: u64,
@@ -290,6 +292,7 @@ impl App {
             memory_card,
             quick_slot: 0,
             fps: FpsMeter::default(),
+            shader: Arc::new(Mutex::new(ShaderState::default())),
             texture: None,
             texture_seq: 0,
             texture_size: [0, 0],
@@ -1648,12 +1651,33 @@ impl App {
                 let scale = (rect.width() / w).min(rect.height() / h).max(0.01);
                 let size = egui::vec2(w * scale, h * scale);
                 let image_rect = egui::Rect::from_center_size(rect.center(), size);
-                ui.painter().image(
-                    texture.id(),
-                    image_rect,
-                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    egui::Color32::WHITE,
-                );
+                let shader_settings = ShaderSettings::from_config(&self.config);
+                let shader_failed = self.shader.lock().unwrap().error().is_some();
+                if shader_settings.preset != ShaderPreset::Off && !shader_failed {
+                    let shader = self.shader.clone();
+                    let texture_id = texture.id();
+                    let game_size = self.texture_size;
+                    let callback = eframe::egui_glow::CallbackFn::new(move |info, painter| {
+                        if let Ok(mut state) = shader.lock() {
+                            if let Err(e) =
+                                state.paint(painter, info, texture_id, game_size, shader_settings)
+                            {
+                                log::warn!("shader: {e:#}");
+                            }
+                        }
+                    });
+                    ui.painter().add(egui::Shape::Callback(egui::PaintCallback {
+                        rect: image_rect,
+                        callback: Arc::new(callback),
+                    }));
+                } else {
+                    ui.painter().image(
+                        texture.id(),
+                        image_rect,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                }
             } else {
                 ui.painter().text(
                     rect.center(),
@@ -1805,6 +1829,8 @@ impl App {
             return;
         };
         let host = self.host.clone();
+        let shader = self.shader.clone();
+        let mut shader_dirty = false;
         let mut changes: Vec<(String, String)> = Vec::new();
         let mut resets: Vec<String> = Vec::new();
         let mut reset_all = false;
@@ -1837,42 +1863,47 @@ impl App {
                 }
                 theme::window_body(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Search");
-                    let hint = if self.settings_category == "appearance" {
-                        "filter themes"
+                    if self.settings_category == "video" {
+                        ui.label("Game shader");
+                        ui.weak("Applied live to the game view only.");
                     } else {
-                        "filter options"
-                    };
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.settings_search)
-                            .desired_width(320.0)
-                            .hint_text(hint),
-                    );
-                    if self.settings_category == "appearance" {
-                        if ui.button("Reload themes").clicked() {
-                            reload_themes = true;
-                        }
-                    } else {
-                        if ui.button("Reset all").clicked() {
-                            reset_all = true;
-                        }
-                        if ui.button("Restart core").clicked() {
-                            restart_core = true;
-                        }
-                        let selected = self
-                            .host
-                            .option_value("swanstation_GPU_Renderer")
-                            .unwrap_or_else(|| "Auto".to_string());
-                        let active = if selected == "Software" {
-                            "Software"
-                        } else if self.host.hardware_active() {
-                            "OpenGL (hardware)"
-                        } else if self.host.hardware_available() {
-                            "OpenGL ready (waiting for frame)"
+                        ui.label("Search");
+                        let hint = if self.settings_category == "appearance" {
+                            "filter themes"
                         } else {
-                            "Software (OpenGL unavailable)"
+                            "filter options"
                         };
-                        ui.weak(format!("Renderer: {active} · selected {selected}"));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.settings_search)
+                                .desired_width(320.0)
+                                .hint_text(hint),
+                        );
+                        if self.settings_category == "appearance" {
+                            if ui.button("Reload themes").clicked() {
+                                reload_themes = true;
+                            }
+                        } else {
+                            if ui.button("Reset all").clicked() {
+                                reset_all = true;
+                            }
+                            if ui.button("Restart core").clicked() {
+                                restart_core = true;
+                            }
+                            let selected = self
+                                .host
+                                .option_value("swanstation_GPU_Renderer")
+                                .unwrap_or_else(|| "Auto".to_string());
+                            let active = if selected == "Software" {
+                                "Software"
+                            } else if self.host.hardware_active() {
+                                "OpenGL (hardware)"
+                            } else if self.host.hardware_available() {
+                                "OpenGL ready (waiting for frame)"
+                            } else {
+                                "Software (OpenGL unavailable)"
+                            };
+                            ui.weak(format!("Renderer: {active} · selected {selected}"));
+                        }
                     }
                 });
                 if self.settings_category == "appearance" {
@@ -1883,6 +1914,11 @@ impl App {
                     if let Some(error) = &theme_error {
                         ui.colored_label(self.ui_theme.error, error);
                     }
+                } else if self.settings_category == "video" {
+                    ui.weak(
+                        "CRT/bloom post-processing sits on top of the game image. \
+                         Presets are inspired approximations, not full CRT Royale or Blurpi shader packs.",
+                    );
                 } else {
                     ui.weak(
                         "Most options apply on the next frame. Use Restart core to re-read all options; \
@@ -1902,6 +1938,12 @@ impl App {
                             .clicked()
                         {
                             self.settings_category = "appearance".to_string();
+                        }
+                        if ui
+                            .selectable_label(self.settings_category == "video", "Video")
+                            .clicked()
+                        {
+                            self.settings_category = "video".to_string();
                         }
                         ui.separator();
                         if ui
@@ -1977,6 +2019,117 @@ impl App {
                                         ui.weak("No matching themes.");
                                     }
                                 });
+                        } else if self.settings_category == "video" {
+                            ui.heading("Game shader");
+                            ui.weak(
+                                "Applied to the game image only. Menus, FPS text and overlays stay sharp.",
+                            );
+                            ui.add_space(8.0);
+
+                            let current_preset =
+                                ShaderPreset::parse(&self.config.shader_preset);
+                            egui::ComboBox::from_id_salt("shader-preset")
+                                .width(300.0)
+                                .selected_text(current_preset.label())
+                                .show_ui(ui, |ui| {
+                                    for preset in ShaderPreset::ALL {
+                                        if ui
+                                            .selectable_label(
+                                                current_preset == preset,
+                                                preset.label(),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.config.shader_preset =
+                                                preset.as_str().to_string();
+                                            let defaults = preset.defaults();
+                                            self.config.shader_bloom = defaults.bloom;
+                                            self.config.shader_scanlines =
+                                                defaults.scanlines;
+                                            self.config.shader_curvature =
+                                                defaults.curvature;
+                                            self.config.shader_mask = defaults.mask;
+                                            self.config.shader_vignette =
+                                                defaults.vignette;
+                                            shader.lock().unwrap().clear_error();
+                                            shader_dirty = true;
+                                        }
+                                    }
+                                });
+                            ui.add_space(8.0);
+
+                            let mut changed = false;
+                            changed |= shader_slider(
+                                ui,
+                                &self.ui_theme,
+                                &mut self.config.shader_bloom,
+                                0.0..=2.0,
+                                "Bloom strength",
+                            )
+                            .changed();
+                            changed |= shader_slider(
+                                ui,
+                                &self.ui_theme,
+                                &mut self.config.shader_scanlines,
+                                0.0..=1.0,
+                                "Scanline strength",
+                            )
+                            .changed();
+                            changed |= shader_slider(
+                                ui,
+                                &self.ui_theme,
+                                &mut self.config.shader_curvature,
+                                0.0..=0.25,
+                                "Curvature",
+                            )
+                            .changed();
+                            changed |= shader_slider(
+                                ui,
+                                &self.ui_theme,
+                                &mut self.config.shader_mask,
+                                0.0..=1.0,
+                                "Aperture mask",
+                            )
+                            .changed();
+                            changed |= shader_slider(
+                                ui,
+                                &self.ui_theme,
+                                &mut self.config.shader_vignette,
+                                0.0..=1.0,
+                                "Vignette",
+                            )
+                            .changed();
+                            if changed {
+                                shader.lock().unwrap().clear_error();
+                                shader_dirty = true;
+                            }
+
+                            ui.add_space(8.0);
+                            if ui.button("Reset to preset defaults").clicked() {
+                                let defaults = current_preset.defaults();
+                                self.config.shader_bloom = defaults.bloom;
+                                self.config.shader_scanlines = defaults.scanlines;
+                                self.config.shader_curvature = defaults.curvature;
+                                self.config.shader_mask = defaults.mask;
+                                self.config.shader_vignette = defaults.vignette;
+                                shader.lock().unwrap().clear_error();
+                                shader_dirty = true;
+                            }
+
+                            if let Some(error) = shader.lock().unwrap().error() {
+                                ui.add_space(6.0);
+                                ui.colored_label(
+                                    self.ui_theme.error,
+                                    format!("Shader unavailable: {error}"),
+                                );
+                                ui.weak("Falling back to the unshaded game image.");
+                            }
+
+                            ui.add_space(10.0);
+                            ui.weak(
+                                "Soft CRT, Blurpi-inspired and Royale-inspired are built-in \
+                                 approximations. They are not ports of the full external shader packs.",
+                            );
                         } else {
                             egui::ScrollArea::vertical()
                             .auto_shrink([false, false])
@@ -2122,6 +2275,9 @@ impl App {
                 .clone()
                 .into_iter()
                 .collect();
+            let _ = self.config.save();
+        }
+        if shader_dirty {
             let _ = self.config.save();
         }
 
@@ -2590,6 +2746,28 @@ impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         self.ui_theme.background.to_normalized_gamma_f32()
     }
+}
+
+/// Sliders need their own rail/handle colours: the regular inactive widget
+/// fill matches the window background in several themes, which hides the
+/// track entirely. Keep the accent trailing fill so the current value stays
+/// readable in both dark and light themes.
+fn shader_slider(
+    ui: &mut egui::Ui,
+    theme: &UiTheme,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    text: &str,
+) -> egui::Response {
+    ui.scope(|ui| {
+        let visuals = ui.visuals_mut();
+        visuals.slider_trailing_fill = true;
+        visuals.widgets.inactive.bg_fill = theme.focus_fill;
+        visuals.widgets.inactive.weak_bg_fill = theme.focus_fill;
+        visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.5, theme.accent);
+        ui.add(egui::Slider::new(value, range).text(text))
+    })
+    .inner
 }
 
 fn choose_port_device(types: &[(String, u32)], configured: Option<u32>) -> Option<u32> {
