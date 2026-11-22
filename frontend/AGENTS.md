@@ -128,17 +128,17 @@ is missing, it emits a placeholder. Do not hand-edit generated files in
 
 ## Version and artifact policy
 
-- Current version: **0.3.1**.
+- Current version: **0.3.2**.
 - Do not bump the version for ordinary fixes or documentation changes unless
   explicitly asked.
 - Do not rename the AppImage major/minor path casually. Rebuild the existing
   version in place for fixes.
 - After rebuilding, report the new SHA256 of both
-  `dist/TsundereStation-0.3.1-x86_64.AppImage` and
-  `dist/TsundereStation-0.3.1-aarch64.AppImage`.
+  `dist/TsundereStation-0.3.2-x86_64.AppImage` and
+  `dist/TsundereStation-0.3.2-aarch64.AppImage`.
 - Generated release files use tag `v<version>`, e.g.
-  `TsundereStation-v0.3.1-SHA256SUMS.txt` and
-  `TsundereStation-v0.3.1-release.md`. Upload both AppImages and the checksum
+  `TsundereStation-v0.3.2-SHA256SUMS.txt` and
+  `TsundereStation-v0.3.2-release.md`. Upload both AppImages and the checksum
   file manually; paste the release draft as GitHub release notes.
 - Documentation-only changes do not require rebuilding the AppImage.
 
@@ -636,8 +636,8 @@ For AppImage changes, build both architectures and run their selftests:
 
 ```sh
 ./packaging/build-appimage.sh --arch all --skip-build
-sha256sum dist/TsundereStation-0.3.1-x86_64.AppImage
-sha256sum dist/TsundereStation-0.3.1-aarch64.AppImage
+sha256sum dist/TsundereStation-0.3.2-x86_64.AppImage
+sha256sum dist/TsundereStation-0.3.2-aarch64.AppImage
 ```
 
 ## Change checklist

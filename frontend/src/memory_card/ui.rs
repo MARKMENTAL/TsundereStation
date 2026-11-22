@@ -57,7 +57,8 @@ enum CardAction {
     RetroArch,
     OpenCard,
     OpenSourceCard,
-    ImportSave,
+    ImportSourceBrowse,
+    ImportSelectedSave,
     UseAsImportSource,
     DeleteSave,
     ExportIcon,
@@ -432,7 +433,7 @@ impl MemoryCardManager {
         match self.tab {
             Tab::Local => {
                 if let Some(card) = &self.loaded {
-                    actions.push(CardAction::ImportSave);
+                    actions.push(CardAction::ImportSourceBrowse);
                     if card.format == CardFormat::Gme {
                         actions.push(CardAction::UseAsImportSource);
                     }
@@ -446,7 +447,7 @@ impl MemoryCardManager {
             Tab::Import => {
                 if self.source_loaded.is_some() {
                     actions.push(CardAction::CopyCard);
-                    actions.push(CardAction::ImportSave);
+                    actions.push(CardAction::ImportSelectedSave);
                 }
             }
         }
@@ -462,27 +463,25 @@ impl MemoryCardManager {
             | CardAction::RetroArch
             | CardAction::OpenCard
             | CardAction::OpenSourceCard => true,
-            CardAction::ImportSave => match self.tab {
-                Tab::Local => self
+            CardAction::ImportSourceBrowse => self
+                .loaded
+                .as_ref()
+                .is_some_and(|card| card.format == CardFormat::Raw),
+            CardAction::ImportSelectedSave => {
+                let selected_source_save = self
+                    .source_loaded
+                    .as_ref()
+                    .and_then(|card| {
+                        self.source_save_selected
+                            .and_then(|index| card.summary.saves.get(index))
+                    })
+                    .is_some();
+                let target_is_raw = self
                     .loaded
                     .as_ref()
-                    .is_some_and(|card| card.format == CardFormat::Raw),
-                Tab::Import => {
-                    let selected_source_save = self
-                        .source_loaded
-                        .as_ref()
-                        .and_then(|card| {
-                            self.source_save_selected
-                                .and_then(|index| card.summary.saves.get(index))
-                        })
-                        .is_some();
-                    let target_is_raw = self
-                        .loaded
-                        .as_ref()
-                        .is_some_and(|target| target.format == CardFormat::Raw);
-                    selected_source_save && self.selected_card.is_some() && target_is_raw
-                }
-            },
+                    .is_some_and(|target| target.format == CardFormat::Raw);
+                selected_source_save && self.selected_card.is_some() && target_is_raw
+            }
             CardAction::UseAsImportSource | CardAction::ConvertGme => self
                 .loaded
                 .as_ref()
@@ -565,8 +564,11 @@ impl MemoryCardManager {
             }
             CardAction::OpenCard => self.start_browse(BrowsePurpose::OpenLocal),
             CardAction::OpenSourceCard => self.start_browse(BrowsePurpose::ImportSource),
-            CardAction::ImportSave => {
+            CardAction::ImportSourceBrowse => {
                 self.handle_local_action(LocalAction::ImportSourceBrowse);
+            }
+            CardAction::ImportSelectedSave => {
+                self.handle_source_action(SourceAction::ImportSave);
             }
             CardAction::UseAsImportSource => {
                 self.handle_local_action(LocalAction::UseAsImportSource);
@@ -918,12 +920,16 @@ impl MemoryCardManager {
                 action_focus(
                     ui,
                     &response,
-                    focused_detail == Some(CardAction::ImportSave),
+                    focused_detail == Some(CardAction::ImportSourceBrowse),
                     theme,
                 );
                 if response.clicked() {
                     action = Some(LocalAction::ImportSourceBrowse);
-                    self.focus_detail_action(&detail_actions, saves_len, CardAction::ImportSave);
+                    self.focus_detail_action(
+                        &detail_actions,
+                        saves_len,
+                        CardAction::ImportSourceBrowse,
+                    );
                 }
                 if card.format == CardFormat::Gme {
                     let response = ui.button("Use as import source");
@@ -1256,12 +1262,16 @@ impl MemoryCardManager {
             action_focus(
                 ui,
                 &response,
-                focused_detail == Some(CardAction::ImportSave),
+                focused_detail == Some(CardAction::ImportSelectedSave),
                 theme,
             );
             if response.clicked() {
                 action = Some(SourceAction::ImportSave);
-                self.focus_detail_action(&detail_actions, saves_len, CardAction::ImportSave);
+                self.focus_detail_action(
+                    &detail_actions,
+                    saves_len,
+                    CardAction::ImportSelectedSave,
+                );
             }
             if target_is_raw {
                 ui.weak("Change the target on the Local cards tab.");
@@ -2042,5 +2052,34 @@ mod tests {
         assert_eq!(manager.tab, Tab::Import);
         manager.navigate(NavAction::PrevTab);
         assert_eq!(manager.tab, Tab::Local);
+    }
+}
+
+#[cfg(test)]
+mod import_action_tests {
+    use super::*;
+
+    fn manager() -> MemoryCardManager {
+        MemoryCardManager::new(
+            PathBuf::from("/tmp/tsundere-cards"),
+            PathBuf::from("/tmp/tsundere-import"),
+        )
+    }
+
+    #[test]
+    fn import_selected_save_does_not_open_a_file_browser() {
+        let mut manager = manager();
+        manager.tab = Tab::Import;
+        manager.execute_card_action(CardAction::ImportSelectedSave);
+        assert!(manager.file_browser.is_none());
+        assert!(manager.error.is_some());
+    }
+
+    #[test]
+    fn local_import_action_still_opens_the_source_browser() {
+        let mut manager = manager();
+        manager.tab = Tab::Local;
+        manager.execute_card_action(CardAction::ImportSourceBrowse);
+        assert!(manager.file_browser.is_some());
     }
 }
