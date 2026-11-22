@@ -63,6 +63,7 @@ enum SettingsEntry {
     ShaderPreset,
     ShaderSlider(ShaderSliderControl),
     ShaderReset,
+    StretchToFill,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1741,10 +1742,8 @@ impl App {
             ui.painter()
                 .rect_filled(rect, egui::CornerRadius::ZERO, egui::Color32::BLACK);
             if let Some(texture) = &self.texture {
-                let [w, h] = [self.texture_size[0] as f32, self.texture_size[1] as f32];
-                let scale = (rect.width() / w).min(rect.height() / h).max(0.01);
-                let size = egui::vec2(w * scale, h * scale);
-                let image_rect = egui::Rect::from_center_size(rect.center(), size);
+                let image_rect =
+                    game_image_rect(rect, self.texture_size, self.config.stretch_to_fill);
                 let shader_settings = ShaderSettings::from_config(&self.config);
                 let shader_failed = self.shader.lock().unwrap().error().is_some();
                 if shader_settings.preset != ShaderPreset::Off && !shader_failed {
@@ -1995,6 +1994,9 @@ impl App {
             ],
             _ => {
                 let mut entries = vec![SettingsEntry::ResetAll, SettingsEntry::RestartCore];
+                if self.settings_category == "display" {
+                    entries.push(SettingsEntry::StretchToFill);
+                }
                 let overrides = self.host.options.read().unwrap().overrides.clone();
                 for key in self.settings_visible_option_keys() {
                     entries.push(SettingsEntry::Option(key.clone()));
@@ -2181,6 +2183,10 @@ impl App {
             SettingsEntry::ShaderPreset => self.cycle_shader_preset(1),
             SettingsEntry::ShaderSlider(_) => {}
             SettingsEntry::ShaderReset => self.reset_shader_defaults(),
+            SettingsEntry::StretchToFill => {
+                self.config.stretch_to_fill = !self.config.stretch_to_fill;
+                let _ = self.config.save();
+            }
         }
     }
 
@@ -2527,6 +2533,29 @@ impl App {
                                 let search = self.settings_search.to_lowercase();
                                 let mut shown = 0;
                                 let mut entry_index = 2;
+                                if self.settings_category == "display" {
+                                    let focused = settings_pane == SettingsPane::Content
+                                        && content_focus == 2;
+                                    let response = ui.checkbox(
+                                        &mut self.config.stretch_to_fill,
+                                        "Stretch game to fill screen",
+                                    );
+                                    focus_ring(ui, response.rect, focused, &self.ui_theme);
+                                    if focused {
+                                        response.scroll_to_me(Some(egui::Align::Center));
+                                    }
+                                    if response.changed() {
+                                        let _ = self.config.save();
+                                    }
+                                    if response.clicked() {
+                                        self.settings_content_focus = 2;
+                                    }
+                                    ui.weak(
+                                        "Fills the game view with no borders; geometry may be stretched.",
+                                    );
+                                    ui.separator();
+                                    entry_index = 3;
+                                }
                                 egui::Grid::new("settings-options-grid")
                                     .num_columns(2)
                                     .striped(true)
@@ -3160,6 +3189,16 @@ impl eframe::App for App {
     }
 }
 
+fn game_image_rect(view: egui::Rect, frame: [usize; 2], stretch: bool) -> egui::Rect {
+    if stretch {
+        return view;
+    }
+    let w = frame[0].max(1) as f32;
+    let h = frame[1].max(1) as f32;
+    let scale = (view.width() / w).min(view.height() / h).max(0.01);
+    egui::Rect::from_center_size(view.center(), egui::vec2(w * scale, h * scale))
+}
+
 fn focus_ring(ui: &egui::Ui, rect: egui::Rect, focused: bool, theme: &UiTheme) {
     if !focused {
         return;
@@ -3401,5 +3440,17 @@ mod tests {
             settings_category_label("custom", "Custom Category"),
             "Custom Category"
         );
+    }
+
+    #[test]
+    fn game_image_rect_fits_or_stretches() {
+        let view = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(1000.0, 1000.0));
+        let fit = game_image_rect(view, [320, 240], false);
+        assert_eq!(fit.width(), 1000.0);
+        assert_eq!(fit.height(), 750.0);
+        assert_eq!(fit.center(), view.center());
+
+        let stretch = game_image_rect(view, [320, 240], true);
+        assert_eq!(stretch, view);
     }
 }

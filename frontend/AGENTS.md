@@ -235,6 +235,13 @@ Teardown-time `eglMakeCurrent` failures are not renderer negotiation failures.
 the handoff with `ensure_current` and only locks software plus shows the warning
 when the new core genuinely cannot get a hardware context.
 
+Core OSD messages saying “falling back to software renderer” are deferred, not
+shown immediately. If the resolved renderer is Software, show after ~1 s.
+If it is OpenGL, wait up to ~10 s and require software frames plus no hardware
+frame before showing. Any hardware frame cancels the pending warning. This
+avoids false toasts when the core makes an early, transient hardware attempt
+before its final successful switch.
+
 ### Game shader
 
 `src/shader.rs` applies a built-in GLSL post-processing stack to the game
@@ -279,6 +286,10 @@ works with both the software and hardware renderers.
   windows. Use a small screen stack for Back navigation. Opening Settings or
   Controller from the pause overlay returns to the overlay, not straight to the
   game.
+- Display scaling is a frontend toggle in Settings → Display:
+  `config.stretch_to_fill` (default false). Off preserves the frame aspect;
+  On uses the whole game view rect. The core's aspect-ratio option is metadata
+  the frontend does not consume, so do not rely on it to stretch the image.
 - Settings/category focus uses a two-pane model: sidebar vs content. Up/Down
   moves within a pane, Right/Confirm enters content, Left/Right changes values,
   Cancel backs out one level, Guide closes the top window. Draw focus with the

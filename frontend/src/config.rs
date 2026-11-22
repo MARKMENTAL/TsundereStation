@@ -45,6 +45,7 @@ pub struct Config {
     pub show_splash: bool,
     pub splash_seconds: f32,
     pub show_fps: bool,
+    pub stretch_to_fill: bool,
     pub theme: String,
     pub shader_preset: String,
     pub shader_bloom: f32,
@@ -75,6 +76,7 @@ impl Default for Config {
             show_splash: true,
             splash_seconds: 4.0,
             show_fps: false,
+            stretch_to_fill: false,
             theme: "JAPS1ME".to_string(),
             shader_preset: "off".to_string(),
             shader_bloom: 0.55,
@@ -318,6 +320,7 @@ mod tests {
         assert_eq!(config.shader_preset, "off");
         assert_eq!(config.shader_bloom, 0.55);
         assert_eq!(config.shader_scanlines, 0.35);
+        assert!(!config.stretch_to_fill);
     }
 
     #[test]
@@ -357,5 +360,16 @@ mod tests {
         assert_eq!(parsed.shader_curvature, 0.1);
         assert_eq!(parsed.shader_mask, 0.4);
         assert_eq!(parsed.shader_vignette, 0.3);
+    }
+
+    #[test]
+    fn stretch_to_fill_roundtrip() {
+        let config = Config {
+            stretch_to_fill: true,
+            ..Config::default()
+        };
+        let text = toml::to_string(&config).expect("serialize config");
+        let parsed: Config = toml::from_str(&text).expect("parse config");
+        assert!(parsed.stretch_to_fill);
     }
 }

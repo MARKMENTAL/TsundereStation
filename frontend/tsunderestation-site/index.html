@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TsundereStation — A standalone SwanStation PS1 front-end</title>
-  <meta name="description" content="TsundereStation is a standalone SwanStation PlayStation 1 front-end written in Rust with egui. TV/controller-first, themeable, and free software. No Discord, no RetroAchievements, no nonsense.">
+  <meta name="description" content="TsundereStation is a standalone SwanStation PlayStation 1 front-end written in Rust with egui. Controller-first, full-screen pages, CRT shaders, themeable, and free software. No Discord, no RetroAchievements, no nonsense.">
   <meta property="og:title" content="TsundereStation">
   <meta property="og:description" content="A standalone SwanStation PS1 front-end written in Rust with egui. Anta baka?!">
   <meta property="og:image" content="assets/launcher.png">
@@ -23,6 +23,7 @@
       </a>
       <nav class="nav-links" aria-label="Primary">
         <a href="#features">Features</a>
+        <a href="#demo">Demo</a>
         <a href="#screenshots">Screenshots</a>
         <a href="#download">Download</a>
         <a href="#start">Getting Started</a>
@@ -35,6 +36,7 @@
     </div>
     <div id="mobile-menu" class="wrap mobile-menu" x-show="open" x-cloak>
       <a href="#features" @click="open = false">Features</a>
+      <a href="#demo" @click="open = false">Demo</a>
       <a href="#screenshots" @click="open = false">Screenshots</a>
       <a href="#download" @click="open = false">Download</a>
       <a href="#start" @click="open = false">Getting Started</a>
@@ -54,10 +56,10 @@
           <blockquote class="quote">
             “Anta baka?! Are you an idiot?!” — The Tsundere, after catching you using a non-free PS1 emulator like DuckStation.
           </blockquote>
-          <p class="lede">Free software, built with Rust and egui. A TV/controller-first launcher, themes, save states, a Memory Card Manager, screenshots, and multi-disc swapping. No Discord. No RetroAchievements. No online services.</p>
+          <p class="lede">Free software, built with Rust and egui. A controller-first launcher, full-screen Settings, Controller and Memory Card pages, CRT shaders, stretch-to-fill display, themes, save states, and multi-disc swapping. No Discord. No RetroAchievements. No online services.</p>
           <div class="hero-cta">
             <a class="btn btn-primary" href="#download">Download v0.3.1</a>
-            <a class="btn btn-secondary" href="#screenshots">See screenshots</a>
+            <a class="btn btn-secondary" href="#demo">Watch demo</a>
           </div>
           <p class="alt-link">Prefer the source? <a href="https://github.com/MARKMENTAL/TsundereStation" target="_blank" rel="noopener">View on GitHub →</a></p>
           <p class="meta">GPL-3.0-or-later · Linux x86_64 / aarch64 · AppImage · standalone libretro</p>
@@ -88,6 +90,20 @@
       </div>
     </section>
 
+    <section id="demo" class="section section-alt">
+      <div class="wrap">
+        <h2>See it in action</h2>
+        <p class="section-sub">A short tour of the controller-first launcher, full-screen pages, CRT shaders and gameplay.</p>
+        <div class="video-shell">
+          <video width="854" height="480" controls playsinline preload="metadata" poster="assets/demovid-poster.jpg" aria-label="TsundereStation demo video">
+            <source src="assets/demovid_480p.mp4" type="video/mp4">
+            Your browser does not support HTML5 video. <a href="assets/demovid_480p.mp4">Download the demo</a>.
+          </video>
+        </div>
+        <p class="video-note">90-second demo captured from TsundereStation v0.3.1.</p>
+      </div>
+    </section>
+
     <section id="screenshots" class="section">
       <div class="wrap">
         <h2>Screenshots</h2>
@@ -97,20 +113,20 @@
           <div class="tabs" role="tablist" aria-label="TsundereStation screenshots">
             <button role="tab" :aria-selected="shot === 'launcher'" :class="shot === 'launcher' && 'active'" @click="shot = 'launcher'">Launcher</button>
             <button role="tab" :aria-selected="shot === 'pause'" :class="shot === 'pause' && 'active'" @click="shot = 'pause'">Pause menu</button>
-            <button role="tab" :aria-selected="shot === 'settings'" :class="shot === 'settings' && 'active'" @click="shot = 'settings'">Theme picker</button>
+            <button role="tab" :aria-selected="shot === 'settings'" :class="shot === 'settings' && 'active'" @click="shot = 'settings'">Settings</button>
           </div>
           <div class="shot-stage">
             <figure x-show="shot === 'launcher'" x-cloak>
               <img src="assets/launcher.png" alt="TsundereStation launcher with controller-first rows and recent games" loading="lazy">
-              <figcaption>Launcher with controller-first navigation, recent games and controller settings.</figcaption>
+              <figcaption>Launcher with controller-first navigation, recent games and player assignments.</figcaption>
             </figure>
             <figure x-show="shot === 'pause'" x-cloak>
-              <img src="assets/pause-menu.png" alt="TsundereStation in-game pause menu over WWF SmackDown! 2" loading="lazy">
-              <figcaption>In-game pause menu. Multi-disc content also gets a disc-swap action.</figcaption>
+              <img src="assets/pause-menu.png" alt="TsundereStation in-game pause menu with FPS and hardware status" loading="lazy">
+              <figcaption>In-game pause menu with FPS/renderer status. Multi-disc content also gets a disc-swap action.</figcaption>
             </figure>
             <figure x-show="shot === 'settings'" x-cloak>
-              <img src="assets/settings.png" alt="TsundereStation Settings and Appearance theme picker" loading="lazy">
-              <figcaption>Settings → Appearance, with live foreground/background and ANSI palette previews.</figcaption>
+              <img src="assets/settings.png" alt="TsundereStation full-screen Settings page with controller navigation" loading="lazy">
+              <figcaption>Full-screen Settings with controller navigation, shortened categories and core options.</figcaption>
             </figure>
           </div>
         </div>
@@ -143,16 +159,20 @@
         <p class="section-sub">The useful parts of an emulator front-end, without the platform.</p>
         <div class="cards">
           <article>
-            <h3>TV-first interface</h3>
-            <p>Large rows, a clear focus outline and controller navigation for the launcher, file browser and pause menu. Settings stay out of the way when you are playing.</p>
+            <h3>Full-screen, controller-first</h3>
+            <p>Large rows, clear focus outlines and controller navigation across the launcher, file browser, pause menu, Settings and Memory Card Manager. LB/RB switch Memory Card tabs; the Controller page stays mouse/keyboard so pads can be tested.</p>
           </article>
           <article>
             <h3>Hardware rendering</h3>
-            <p>OpenGL hardware rendering through a headless EGL context, with automatic software fallback. Heavy 640×480 menus stay smooth while the UI and AppImage stay portable.</p>
+            <p>OpenGL hardware rendering through a headless EGL context. The renderer choice is reused across core restarts, with automatic and truthful software fallback when hardware is unavailable.</p>
           </article>
           <article>
             <h3>CRT shaders</h3>
-            <p>Soft CRT, Blurpi-inspired and CRT Royale-inspired game-view presets with adjustable bloom, scanlines, curvature, aperture mask and vignette. Menus and overlays stay sharp.</p>
+            <p>Rust-driven custom GLSL presets: Soft CRT, Blurpi-inspired and CRT Royale-inspired, with adjustable bloom, scanlines, curvature, aperture mask and vignette. The game view gets the effect; menus and overlays stay sharp.</p>
+          </article>
+          <article>
+            <h3>Display scaling</h3>
+            <p>Fit the original frame or stretch it edge to edge. Stretch-to-fill removes borders in windowed and fullscreen play, and the CRT shader follows the stretched image.</p>
           </article>
           <article>
             <h3>Themes that listen</h3>
@@ -160,7 +180,7 @@
           </article>
           <article>
             <h3>Memory Card Manager</h3>
-            <p>Inspect <code>.srm</code>, <code>.mcd</code> and DexDrive <code>.gme</code> cards. Import saves, convert cards, delete with backups, preview icons and copy from DuckStation or RetroArch.</p>
+            <p>Inspect <code>.srm</code>, <code>.mcd</code> and DexDrive <code>.gme</code> cards. Import saves, convert cards, delete with backups, preview icons and copy from DuckStation or RetroArch, with controller navigation and LB/RB tabs.</p>
           </article>
           <article>
             <h3>Screenshots</h3>
@@ -197,8 +217,8 @@
             <div class="checksum" x-data="{ copied: false }">
               <p class="label">SHA-256</p>
               <div class="code-row">
-                <code>b965c9332c1930549f59717912b80f7143888c4d3e630b79117fb5b14aa0b6f2</code>
-                <button type="button" @click="navigator.clipboard.writeText('b965c9332c1930549f59717912b80f7143888c4d3e630b79117fb5b14aa0b6f2').then(() => { copied = true; setTimeout(() => copied = false, 1500); })" x-text="copied ? 'Copied!' : 'Copy'"></button>
+                <code>08d10947319a9c4bd829a130896bb7ddc1d42fd949d035e6ae1d77ae13fdf0ed</code>
+                <button type="button" @click="navigator.clipboard.writeText('08d10947319a9c4bd829a130896bb7ddc1d42fd949d035e6ae1d77ae13fdf0ed').then(() => { copied = true; setTimeout(() => copied = false, 1500); })" x-text="copied ? 'Copied!' : 'Copy'"></button>
               </div>
               <p class="verify">Verify: <code>sha256sum TsundereStation-0.3.1-x86_64.AppImage</code></p>
             </div>
@@ -217,8 +237,8 @@
             <div class="checksum" x-data="{ copied: false }">
               <p class="label">SHA-256</p>
               <div class="code-row">
-                <code>76a250f153df951902576a51603bdde87d51a5cbacb517a8cf7ff8156ad351b5</code>
-                <button type="button" @click="navigator.clipboard.writeText('76a250f153df951902576a51603bdde87d51a5cbacb517a8cf7ff8156ad351b5').then(() => { copied = true; setTimeout(() => copied = false, 1500); })" x-text="copied ? 'Copied!' : 'Copy'"></button>
+                <code>4ba05f5791450d5474f30a1154ab5997190fa3168e15634b5859c32314f76fc6</code>
+                <button type="button" @click="navigator.clipboard.writeText('4ba05f5791450d5474f30a1154ab5997190fa3168e15634b5859c32314f76fc6').then(() => { copied = true; setTimeout(() => copied = false, 1500); })" x-text="copied ? 'Copied!' : 'Copy'"></button>
               </div>
               <p class="verify">Verify: <code>sha256sum TsundereStation-0.3.1-aarch64.AppImage</code></p>
             </div>

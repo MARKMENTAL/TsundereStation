@@ -14,30 +14,43 @@ It focuses on playing PS1 games with a good, controller-friendly TV UI. No
 Discord integration, no RetroAchievements, no trophy popups, no bells and
 whistles. Just the core, the games, and a tsundere attitude.
 
+Settings, Controller and the Memory Card Manager are full-screen pages with
+controller navigation. The game view supports built-in custom GLSL CRT shaders
+and an optional stretch-to-fill display mode.
+
 The app includes the TsundereStation logo and a short startup splash with the
 provided motif. Both assets are embedded in the binary.
 
 ## Screenshots
 
 <p align="center">
-  <img src="readme-screenshots/uiscreen1.png" alt="TsundereStation launcher" width="900">
+  <img src="tsunderestation-site/assets/launcher.png" alt="TsundereStation launcher with controller-first rows and recent games" width="900">
 </p>
 <p align="center"><em>Launcher with controller-first navigation and recent games.</em></p>
 
 <table>
   <tr>
     <td align="center" valign="top">
-      <img src="readme-screenshots/uiscreeningame.png" alt="TsundereStation in-game pause menu" width="440">
+      <img src="tsunderestation-site/assets/pause-menu.png" alt="TsundereStation in-game pause menu with FPS and hardware status" width="440">
     </td>
     <td align="center" valign="top">
-      <img src="readme-screenshots/uiscreensettings.png" alt="TsundereStation settings and theme picker" width="440">
+      <img src="tsunderestation-site/assets/settings.png" alt="TsundereStation full-screen Settings page with controller navigation" width="440">
     </td>
   </tr>
   <tr>
-    <td align="center"><em>In-game pause menu over gameplay.</em></td>
-    <td align="center"><em>Settings → Appearance theme picker.</em></td>
+    <td align="center"><em>In-game pause menu with FPS and renderer status.</em></td>
+    <td align="center"><em>Full-screen Settings with controller navigation.</em></td>
   </tr>
 </table>
+
+## Demo
+
+<p align="center">
+  <a href="tsunderestation-site/assets/demovid_480p.mp4">
+    <img src="tsunderestation-site/assets/demovid-poster.jpg" alt="Watch the TsundereStation demo" width="900">
+  </a>
+</p>
+<p align="center"><em>▶ Watch the 90-second demo of the launcher, full-screen pages, CRT shaders and gameplay.</em></p>
 
 ### Game screenshots
 
@@ -121,9 +134,11 @@ These are direct `F12` screenshots from TsundereStation.
 - Free software under GPL-3.0-or-later.
 - Standalone native front-end for the SwanStation libretro core.
 - TV/controller-first launcher, file browser and pause menu.
-- Mouse/keyboard settings, controller configuration, save states and themes.
+- Full-screen Settings, Controller and Memory Card Manager pages with controller navigation.
+- Save states, controller configuration, memory cards and themes.
 - Hardware OpenGL rendering with automatic software fallback.
-- Built-in CRT/bloom shader presets for the game view.
+- Built-in Rust-driven custom GLSL CRT/bloom shader presets for the game view.
+- Stretch-to-fill display option for borderless play.
 - Linux x86_64 and aarch64 AppImages.
 
 Not in scope: Discord integration, RetroAchievements, accounts, cloud saves,
@@ -480,6 +495,20 @@ the core reuses the same EGL context and renderer decision; only changing **GPU
 Renderer** and pressing **Restart core** re-resolves it once. A fresh core may
 briefly show `SW` while it boots before switching to hardware.
 
+### Display scaling
+
+Settings → **Display** → **Stretch game to fill screen** controls the game image
+rectangle:
+
+- **Off** (default) preserves the frame’s aspect ratio and letterboxes or
+  pillarboxes as needed.
+- **On** stretches the game image across the entire game view, edge to edge.
+  Geometry may be distorted. In fullscreen this fills the whole monitor.
+
+The frontend fits the raw frame pixels; the core’s **Aspect Ratio: 16:9** option
+only changes reported geometry and does not stretch the image by itself. Use
+the stretch toggle when you want a borderless full-screen picture.
+
 The AppImage deliberately leaves `libEGL`, `libGL`, X11/Wayland and Mesa/GBM/DRM
 libraries to the host. Bundling those breaks graphics initialization on some
 systems, including Asahi Linux.
@@ -559,7 +588,7 @@ core next to the executable, in the current directory, in
 - `src/screenshot.rs`: JPEG screenshot naming and encoding.
 - `src/filebrowser.rs`: small built-in file picker.
 - `assets/`: embedded themes, logo, splash motif and desktop icon.
-- `readme-screenshots/`: README-only UI and game screenshots; not embedded.
+- `readme-screenshots/`: README-only game screenshots; the UI images are shared with `tsunderestation-site/assets/`.
 - `tsunderestation-site/`: static marketing site, assets and download directory.
 - `packaging/`: desktop entry, AppImage build script and release templates.
 

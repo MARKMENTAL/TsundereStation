@@ -85,6 +85,19 @@ pub struct HostMessage {
     pub ttl: Duration,
 }
 
+struct PendingRendererWarning {
+    text: String,
+    kind: MessageKind,
+    ttl: Duration,
+    created: Instant,
+    hardware_frame_seq: u64,
+    software_frame_seq: u64,
+}
+
+const RENDERER_SOFTWARE_GRACE: Duration = Duration::from_secs(1);
+const RENDERER_OPENGL_GRACE: Duration = Duration::from_secs(10);
+const RENDERER_WARNING_TTL: Duration = Duration::from_secs(5);
+
 #[derive(Default)]
 pub struct OptionStore {
     pub categories: Vec<CategoryDef>,
@@ -159,6 +172,9 @@ pub struct HostState {
     pub input: Arc<InputShared>,
 
     messages: Mutex<VecDeque<HostMessage>>,
+    pending_renderer_warning: Mutex<Option<PendingRendererWarning>>,
+    hardware_frame_seq: AtomicU64,
+    software_frame_seq: AtomicU64,
     controller_ports: Mutex<Vec<ControllerPortInfo>>,
 
     pub shutdown: AtomicBool,
@@ -200,6 +216,9 @@ impl HostState {
             audio: Arc::new(AudioRing::new()),
             input: Arc::new(InputShared::new()),
             messages: Mutex::new(VecDeque::new()),
+            pending_renderer_warning: Mutex::new(None),
+            hardware_frame_seq: AtomicU64::new(0),
+            software_frame_seq: AtomicU64::new(0),
             controller_ports: Mutex::new(Vec::new()),
             shutdown: AtomicBool::new(false),
             fast_forward: AtomicBool::new(false),
@@ -254,7 +273,56 @@ impl HostState {
     }
 
     pub fn take_messages(&self) -> Vec<HostMessage> {
+        self.resolve_pending_renderer_warning_at(Instant::now());
         self.messages.lock().unwrap().drain(..).collect()
+    }
+
+    pub fn note_hardware_frame(&self) {
+        self.hardware_frame_seq.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn note_software_frame(&self) {
+        self.software_frame_seq.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn clear_pending_renderer_warning(&self) {
+        *self.pending_renderer_warning.lock().unwrap() = None;
+    }
+
+    fn resolve_pending_renderer_warning_at(&self, now: Instant) {
+        let decision = self.renderer_decision();
+        let hardware_seq = self.hardware_frame_seq.load(Ordering::Relaxed);
+        let software_seq = self.software_frame_seq.load(Ordering::Relaxed);
+        let ready = {
+            let mut pending = self.pending_renderer_warning.lock().unwrap();
+            match pending.as_ref() {
+                Some(warning) if hardware_seq > warning.hardware_frame_seq => {
+                    log::debug!(
+                        "Discarding obsolete renderer fallback message after a hardware frame"
+                    );
+                    *pending = None;
+                    None
+                }
+                Some(warning) => {
+                    let grace = if decision == Some(hardware::RendererDecision::Software) {
+                        RENDERER_SOFTWARE_GRACE
+                    } else {
+                        RENDERER_OPENGL_GRACE
+                    };
+                    let software_evidence = decision == Some(hardware::RendererDecision::Software)
+                        || software_seq > warning.software_frame_seq;
+                    if now.duration_since(warning.created) >= grace && software_evidence {
+                        pending.take()
+                    } else {
+                        None
+                    }
+                }
+                None => None,
+            }
+        };
+        if let Some(warning) = ready {
+            self.queue_message(warning.text, warning.kind, warning.ttl);
+        }
     }
 
     pub fn controller_ports(&self) -> Vec<ControllerPortInfo> {
@@ -302,6 +370,22 @@ impl HostState {
     }
 
     fn push_message(&self, text: String, kind: MessageKind, ttl: Duration) {
+        if is_renderer_fallback_message(&text) {
+            log::info!("Deferring core renderer fallback message: {text}");
+            *self.pending_renderer_warning.lock().unwrap() = Some(PendingRendererWarning {
+                text,
+                kind,
+                ttl: ttl.min(RENDERER_WARNING_TTL),
+                created: Instant::now(),
+                hardware_frame_seq: self.hardware_frame_seq.load(Ordering::Relaxed),
+                software_frame_seq: self.software_frame_seq.load(Ordering::Relaxed),
+            });
+            return;
+        }
+        self.queue_message(text, kind, ttl);
+    }
+
+    fn queue_message(&self, text: String, kind: MessageKind, ttl: Duration) {
         let mut messages = self.messages.lock().unwrap();
         if messages.len() >= 20 {
             messages.pop_front();
@@ -811,6 +895,11 @@ impl HostState {
     }
 }
 
+fn is_renderer_fallback_message(text: &str) -> bool {
+    text.to_ascii_lowercase()
+        .contains("falling back to software renderer")
+}
+
 fn path_cstring(path: &Path) -> CString {
     CString::new(path.to_string_lossy().as_bytes())
         .unwrap_or_else(|_| CString::new("/tmp").unwrap())
@@ -838,6 +927,7 @@ pub extern "C" fn video_refresh(data: *const c_void, width: c_uint, height: c_ui
     }
     if let Some(host) = HOST.get() {
         // Keep the FPS renderer suffix tied to the frame path actually used.
+        host.note_software_frame();
         host.hardware_active.store(false, Ordering::Relaxed);
         unsafe { host.video.push(data, width, height, pitch) };
     }
@@ -969,5 +1059,87 @@ mod tests {
             store.current("swanstation_GPU_ResolutionScale").as_deref(),
             Some("1")
         );
+    }
+
+    fn test_host() -> HostState {
+        HostState::new(
+            Path::new("/tmp/tsundere-host-test"),
+            Path::new("/tmp/tsundere-host-test"),
+        )
+    }
+
+    #[test]
+    fn renderer_fallback_message_is_recognized() {
+        assert!(is_renderer_fallback_message(
+            "Failed to initialize OpenGL renderer, falling back to software renderer."
+        ));
+        assert!(!is_renderer_fallback_message("Loaded game"));
+    }
+
+    #[test]
+    fn renderer_fallback_warning_is_dropped_after_hardware_frame() {
+        let host = test_host();
+        host.push_message(
+            "Failed to initialize OpenGL renderer, falling back to software renderer.".into(),
+            MessageKind::Warning,
+            Duration::from_secs(30),
+        );
+        assert!(
+            host.take_messages().is_empty(),
+            "warning should be deferred"
+        );
+
+        host.note_hardware_frame();
+        host.resolve_pending_renderer_warning_at(Instant::now() + RENDERER_OPENGL_GRACE);
+        assert!(
+            host.take_messages().is_empty(),
+            "hardware frame should cancel the warning"
+        );
+    }
+
+    #[test]
+    fn renderer_fallback_warning_emits_after_software_grace() {
+        let host = test_host();
+        host.set_renderer_decision(hardware::RendererDecision::Software);
+        host.push_message(
+            "Failed to initialize OpenGL renderer, falling back to software renderer.".into(),
+            MessageKind::Warning,
+            Duration::from_secs(30),
+        );
+        host.resolve_pending_renderer_warning_at(Instant::now() + RENDERER_SOFTWARE_GRACE);
+        let messages = host.take_messages();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].kind, MessageKind::Warning);
+        assert!(messages[0].ttl <= RENDERER_WARNING_TTL);
+    }
+
+    #[test]
+    fn opengl_warning_waits_for_software_frames_and_long_grace() {
+        let host = test_host();
+        host.set_renderer_decision(hardware::RendererDecision::OpenGl);
+        host.push_message(
+            "Failed to initialize OpenGL renderer, falling back to software renderer.".into(),
+            MessageKind::Warning,
+            Duration::from_secs(30),
+        );
+        host.note_software_frame();
+        host.resolve_pending_renderer_warning_at(Instant::now() + Duration::from_secs(2));
+        assert!(host.take_messages().is_empty());
+
+        host.resolve_pending_renderer_warning_at(Instant::now() + RENDERER_OPENGL_GRACE);
+        assert_eq!(host.take_messages().len(), 1);
+    }
+
+    #[test]
+    fn opengl_warning_stays_pending_without_frames() {
+        let host = test_host();
+        host.set_renderer_decision(hardware::RendererDecision::OpenGl);
+        host.push_message(
+            "Failed to initialize OpenGL renderer, falling back to software renderer.".into(),
+            MessageKind::Warning,
+            Duration::from_secs(30),
+        );
+        host.resolve_pending_renderer_warning_at(Instant::now() + RENDERER_OPENGL_GRACE);
+        assert!(host.take_messages().is_empty());
     }
 }

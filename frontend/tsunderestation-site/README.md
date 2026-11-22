@@ -15,15 +15,18 @@ deploys as plain static files.
 
 ## Files
 
-- `index.html` — nav, hero, fact strip, screenshots, features, download,
-  Getting Started, FAQ and footer.
+- `index.html` — nav, hero, fact strip, demo video, screenshots, features,
+  download, Getting Started, FAQ and footer.
 - `styles.css` — design tokens, layout, components, responsive breakpoints and
   reduced-motion handling.
 - `assets/` — self-contained site images:
   - `logo.png` from `../assets/tsunderestation.png`
-  - `launcher.png`, `pause-menu.png`, `settings.png` from `../readme-screenshots/`
-  - `evangelion-1.jpg`, `evangelion-2.jpg`, `wwf-1.jpg`, `wwf-2.jpg` from the
-    same screenshot collection
+  - `launcher.png`, `pause-menu.png`, `settings.png` — updated v0.3.1 UI
+    screenshots (launcher, pause menu and full-screen Settings).
+  - `evangelion-1.jpg`, `evangelion-2.jpg`, `wwf-1.jpg`, `wwf-2.jpg` — gameplay
+    screenshots from the same collection.
+  - `demovid_480p.mp4` — the served 90-second demo video.
+  - `demovid-poster.jpg` — poster frame for the demo player.
 - `downloads/TsundereStation-0.3.1-x86_64.AppImage` — current x86_64 AppImage,
   copied from `../dist/`. Download artifacts are gitignored; copy them here
   before previewing/deploying the download links.
@@ -65,9 +68,14 @@ When a new AppImage is built:
 
 3. Update the AppImage ignore path in `../.gitignore` if the filename changed.
 
-4. Refresh `assets/` screenshots only if the UI changed.
+4. Refresh `assets/` screenshots only if the UI changed. The current UI images
+   are the updated v0.3.1 launcher, pause menu and full-screen Settings page.
 
-5. Rebuild the AppImage’s generated `SHA256SUMS.txt`/release draft and compare
+5. When refreshing the demo, keep a 480p H.264/AAC MP4 in `assets/` and rebuild
+   `demovid-poster.jpg` from a representative frame. The site references the
+   480p file directly; do not add a large source video.
+
+6. Rebuild the AppImage’s generated `SHA256SUMS.txt`/release draft and compare
    the checksum shown on the site with the artifact actually being served.
 
 The site intentionally does not use a build step or generated `release.json`.
@@ -91,7 +99,8 @@ locally and update the script tag.
 - PS1 gradient used sparingly for dividers and selected accents.
 - Aqua links/code and coral warnings keep the palette consistent with the app.
 - Screenshots are real TsundereStation frames captured with `F12`; UI shots use
-  the JAPS1ME theme.
+  the JAPS1ME theme. The demo video is local MP4/H.264 with native browser
+  controls; it is not autoplayed and only preloads metadata.
 - The hero screenshot chrome uses a Windows XP Media Center/Royale-inspired
   graphite-to-black glossy title bar with silver minimize/maximize controls and
   a red close button. Do not replace it with macOS traffic lights.

@@ -127,6 +127,7 @@ impl CoreHost {
                 .current("swanstation_GPU_Renderer")
                 .unwrap_or_else(|| "Auto".to_string());
             crate::libretro::hardware::resolve_renderer(&requested, &host);
+            host.clear_pending_renderer_warning();
 
             (api.retro_set_video_refresh)(video_refresh);
             (api.retro_set_audio_sample)(audio_sample);

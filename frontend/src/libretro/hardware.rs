@@ -491,6 +491,7 @@ pub fn read_frame(width: u32, height: u32) -> bool {
     };
     if let Some(host) = HOST.get() {
         host.video.push_rgba(w, h, rgba);
+        host.note_hardware_frame();
         if !host.hardware_active.swap(true, Ordering::Relaxed) {
             log::info!("hardware: first hardware-rendered frame");
         }
