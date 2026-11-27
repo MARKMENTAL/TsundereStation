@@ -138,6 +138,7 @@ These are direct `F12` screenshots from TsundereStation.
 - Save states, controller configuration, memory cards and themes.
 - Hardware OpenGL rendering with automatic software fallback.
 - Built-in Rust-driven custom GLSL CRT/bloom shader presets for the game view.
+- X11/Wayland clipboard screenshots and controller fast-forward toggle.
 - Stretch-to-fill display option for borderless play.
 - Linux x86_64 and aarch64 AppImages.
 
@@ -217,6 +218,10 @@ Press `F12` or use **Take screenshot (F12)** in the pause menu to save a JPEG
 under `~/.local/share/tsunderestation/screenshots`. Files are named
 `gamename-YYYYMMDDHHMMSS.jpg` using local time, with `-1`, `-2`, … added if two
 screenshots land in the same second.
+
+**Copy screenshot to clipboard** in the pause menu copies the raw game frame as
+an image to the X11 or Wayland clipboard. It uses the same frame as `F12`, so CRT
+shaders and stretch-to-fill are not baked into the copied image.
 
 ## AppImage (x86_64 and aarch64)
 
@@ -422,6 +427,7 @@ Controller navigation:
 - Memory Card Manager: Up/Down walks cards, saves and then the action buttons; Left/Right switches the card list and details; LB/RB switches Local/Import; Cross selects, Circle backs out or closes
 - Controller page: controller input is ignored; use the Back button with mouse or keyboard
 - Keyboard equivalents: arrow keys move, `Enter` selects, `Esc` closes, PageUp/PageDown switch Memory Card tabs
+- In game, RightStick/R3 toggles fast-forward on/off when **R3 fast-forward** is On in the launcher; Off sends R3 back to the emulated controller. Holding `Tab` still fast-forwards temporarily.
 - Player 1 drives the launcher and menus. Player 2 is game-only and does not navigate the UI.
 
 Two-player setup:
@@ -456,6 +462,8 @@ Keyboard:
 SDL game controller:
 
 - `PS` / `Guide` button: open/close the in-game menu
+- RightStick/R3: toggle fast-forward on/off when enabled by the launcher’s **R3 fast-forward** row; otherwise R3 is sent to the game
+- Pause menu → **Copy screenshot to clipboard**: copy the raw frame as an X11/Wayland image
 - `Select + Start`: optional fallback menu combo (enable in Controller settings)
 - In the menu: D-pad/left stick moves, Cross selects, Circle closes
 - Left/Right changes the save-state slot
@@ -468,7 +476,7 @@ SDL game controller:
   images expose only one disc and show no swap row.
 - The standard SDL gamepad mapping is used: Cross → PS1 Cross, Circle → Circle,
   Square → Square, Triangle → Triangle, shoulders → L1/R1, triggers → L2/R2,
-  stick clicks → L3/R3.
+  stick clicks → L3/R3; R3 is reserved for fast-forward only when the launcher toggle is On.
 
 If the PS button opens Steam's overlay instead of this menu, disable Steam Input
 for the controller (or launch the frontend outside Steam). SDL's HIDAPI driver is
@@ -586,6 +594,7 @@ core next to the executable, in the current directory, in
 - `src/config.rs`: config schema, XDG paths, legacy migration and core discovery.
 - `src/memory_card/`: vendored JAPS1ME card engine and the Memory Card Manager UI.
 - `src/screenshot.rs`: JPEG screenshot naming and encoding.
+- `src/clipboard.rs`: persistent X11/Wayland clipboard worker for raw game-frame images.
 - `src/filebrowser.rs`: small built-in file picker.
 - `assets/`: embedded themes, logo, splash motif and desktop icon.
 - `readme-screenshots/`: README-only game screenshots; the UI images are shared with `tsunderestation-site/assets/`.

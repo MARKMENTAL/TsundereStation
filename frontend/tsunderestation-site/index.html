@@ -58,7 +58,7 @@
           </blockquote>
           <p class="lede">Free software, built with Rust and egui. A controller-first launcher, full-screen Settings, Controller and Memory Card pages, CRT shaders, stretch-to-fill display, themes, save states, and multi-disc swapping. No Discord. No RetroAchievements. No online services.</p>
           <div class="hero-cta">
-            <a class="btn btn-primary" href="#download">Download v0.3.2</a>
+            <a class="btn btn-primary" href="#download">Download v0.3.3</a>
             <a class="btn btn-secondary" href="#demo">Watch demo</a>
           </div>
           <p class="alt-link">Prefer the source? <a href="https://github.com/MARKMENTAL/TsundereStation" target="_blank" rel="noopener">View on GitHub →</a></p>
@@ -76,7 +76,7 @@
             </div>
             <img src="assets/launcher.png" alt="TsundereStation launcher with Play, recent games and controller settings" width="1920" height="1080">
           </div>
-          <p class="version-badge">v0.3.2 · JAPS1ME default theme</p>
+          <p class="version-badge">v0.3.3 · JAPS1ME default theme</p>
         </div>
       </div>
     </section>
@@ -184,7 +184,11 @@
           </article>
           <article>
             <h3>Screenshots</h3>
-            <p>Press <code>F12</code> or use the pause menu to save a JPEG of the current game frame. Files are named <code>gamename-YYYYMMDDHHMMSS.jpg</code>.</p>
+            <p>Press <code>F12</code> or use the pause menu to save a JPEG of the current game frame. <strong>Copy screenshot to clipboard</strong> sends the raw frame to your X11 or Wayland clipboard.</p>
+          </article>
+          <article>
+            <h3>Fast-forward</h3>
+            <p>Toggle fast-forward on and off with RightStick/R3, or hold <code>Tab</code> for temporary fast-forward. The launcher can turn the R3 shortcut off to restore R3 to the game controller. The FPS overlay shows <code>&gt;&gt;</code> while it is active.</p>
           </article>
           <article>
             <h3>Multi-disc swapping</h3>
@@ -201,46 +205,46 @@
     <section id="download" class="section">
       <div class="wrap">
         <h2>Download</h2>
-        <p class="section-sub">Linux x86_64 and aarch64 AppImages. The current build is v0.3.2.</p>
+        <p class="section-sub">Linux x86_64 and aarch64 AppImages. The current build is v0.3.3.</p>
         <div class="download-list">
           <div class="download-card">
             <div class="download-main">
               <span class="badge">Linux x86_64</span>
-              <h3>TsundereStation v0.3.2</h3>
-              <p><code>TsundereStation-0.3.2-x86_64.AppImage</code> · 15 MB</p>
+              <h3>TsundereStation v0.3.3</h3>
+              <p><code>TsundereStation-0.3.3-x86_64.AppImage</code> · 15 MB</p>
               <div class="download-actions">
-                <a class="btn btn-primary" href="downloads/TsundereStation-0.3.2-x86_64.AppImage" download>Download AppImage</a>
-                <a class="btn btn-secondary" href="https://github.com/MARKMENTAL/TsundereStation/releases/tag/v0.3.2" target="_blank" rel="noopener">Release notes</a>
+                <a class="btn btn-primary" href="downloads/TsundereStation-0.3.3-x86_64.AppImage" download>Download AppImage</a>
+                <a class="btn btn-secondary" href="https://github.com/MARKMENTAL/TsundereStation/releases/tag/v0.3.3" target="_blank" rel="noopener">Release notes</a>
               </div>
               <p class="fine-print">Built on Debian 13. Requires glibc 2.41 or newer. If FUSE2 is unavailable, run with <code>--appimage-extract-and-run</code>.</p>
             </div>
             <div class="checksum" x-data="{ copied: false }">
               <p class="label">SHA-256</p>
               <div class="code-row">
-                <code>faa47d87bff754efcba10c8895f2939a6f1c907fdf76ef1865d4d60a75d92398</code>
-                <button type="button" @click="navigator.clipboard.writeText('faa47d87bff754efcba10c8895f2939a6f1c907fdf76ef1865d4d60a75d92398').then(() => { copied = true; setTimeout(() => copied = false, 1500); })" x-text="copied ? 'Copied!' : 'Copy'"></button>
+                <code>e3002a04d370d77075ff423563454d3ac6a0a1785ac05ff9c8ae919c4831a8cc</code>
+                <button type="button" @click="navigator.clipboard.writeText('e3002a04d370d77075ff423563454d3ac6a0a1785ac05ff9c8ae919c4831a8cc').then(() => { copied = true; setTimeout(() => copied = false, 1500); })" x-text="copied ? 'Copied!' : 'Copy'"></button>
               </div>
-              <p class="verify">Verify: <code>sha256sum TsundereStation-0.3.2-x86_64.AppImage</code></p>
+              <p class="verify">Verify: <code>sha256sum TsundereStation-0.3.3-x86_64.AppImage</code></p>
             </div>
           </div>
           <div class="download-card">
             <div class="download-main">
               <span class="badge">Linux ARM64 / aarch64</span>
-              <h3>TsundereStation v0.3.2</h3>
-              <p><code>TsundereStation-0.3.2-aarch64.AppImage</code> · 15 MB</p>
+              <h3>TsundereStation v0.3.3</h3>
+              <p><code>TsundereStation-0.3.3-aarch64.AppImage</code> · 15 MB</p>
               <div class="download-actions">
-                <a class="btn btn-primary" href="downloads/TsundereStation-0.3.2-aarch64.AppImage" download>Download AppImage</a>
-                <a class="btn btn-secondary" href="https://github.com/MARKMENTAL/TsundereStation/releases/tag/v0.3.2" target="_blank" rel="noopener">Release notes</a>
+                <a class="btn btn-primary" href="downloads/TsundereStation-0.3.3-aarch64.AppImage" download>Download AppImage</a>
+                <a class="btn btn-secondary" href="https://github.com/MARKMENTAL/TsundereStation/releases/tag/v0.3.3" target="_blank" rel="noopener">Release notes</a>
               </div>
               <p class="fine-print">Built on Debian 13. Requires glibc 2.41 or newer. If FUSE2 is unavailable, run with <code>--appimage-extract-and-run</code>.</p>
             </div>
             <div class="checksum" x-data="{ copied: false }">
               <p class="label">SHA-256</p>
               <div class="code-row">
-                <code>7a2bd3ca80ccf2e52904822e0bc1a5d486a14545cacdfdb626ab098b091afc7f</code>
-                <button type="button" @click="navigator.clipboard.writeText('7a2bd3ca80ccf2e52904822e0bc1a5d486a14545cacdfdb626ab098b091afc7f').then(() => { copied = true; setTimeout(() => copied = false, 1500); })" x-text="copied ? 'Copied!' : 'Copy'"></button>
+                <code>74aac6fa79f5083c60bcd01d2f531a7fede05d85702b79497ed52e5ee2dd0fe5</code>
+                <button type="button" @click="navigator.clipboard.writeText('74aac6fa79f5083c60bcd01d2f531a7fede05d85702b79497ed52e5ee2dd0fe5').then(() => { copied = true; setTimeout(() => copied = false, 1500); })" x-text="copied ? 'Copied!' : 'Copy'"></button>
               </div>
-              <p class="verify">Verify: <code>sha256sum TsundereStation-0.3.2-aarch64.AppImage</code></p>
+              <p class="verify">Verify: <code>sha256sum TsundereStation-0.3.3-aarch64.AppImage</code></p>
             </div>
           </div>
         </div>
@@ -260,14 +264,14 @@
               <li>Add a BIOS image if you have one, or let the core use OpenBIOS.</li>
             </ol>
             <div class="term">
-              <div class="term-bar"><span>run the AppImage</span><button type="button" @click="navigator.clipboard.writeText('# x86_64\\nchmod +x TsundereStation-0.3.2-x86_64.AppImage\\n./TsundereStation-0.3.2-x86_64.AppImage\\n\\n# aarch64\\nchmod +x TsundereStation-0.3.2-aarch64.AppImage\\n./TsundereStation-0.3.2-aarch64.AppImage').then(() => { copied = true; setTimeout(() => copied = false, 1500); })" x-text="copied ? 'Copied!' : 'Copy'"></button></div>
+              <div class="term-bar"><span>run the AppImage</span><button type="button" @click="navigator.clipboard.writeText('# x86_64\\nchmod +x TsundereStation-0.3.3-x86_64.AppImage\\n./TsundereStation-0.3.3-x86_64.AppImage\\n\\n# aarch64\\nchmod +x TsundereStation-0.3.3-aarch64.AppImage\\n./TsundereStation-0.3.3-aarch64.AppImage').then(() => { copied = true; setTimeout(() => copied = false, 1500); })" x-text="copied ? 'Copied!' : 'Copy'"></button></div>
               <pre><code># x86_64
-chmod +x TsundereStation-0.3.2-x86_64.AppImage
-./TsundereStation-0.3.2-x86_64.AppImage
+chmod +x TsundereStation-0.3.3-x86_64.AppImage
+./TsundereStation-0.3.3-x86_64.AppImage
 
 # aarch64
-chmod +x TsundereStation-0.3.2-aarch64.AppImage
-./TsundereStation-0.3.2-aarch64.AppImage</code></pre>
+chmod +x TsundereStation-0.3.3-aarch64.AppImage
+./TsundereStation-0.3.3-aarch64.AppImage</code></pre>
             </div>
           </article>
           <article class="start-card" x-data="{ copied: false }">
@@ -332,12 +336,12 @@ cargo build --release
           <img src="assets/logo.png" alt="" width="34" height="34">
           <span class="brand-text small">TsundereStation</span>
         </div>
-        <p>A standalone SwanStation PS1 front-end in Rust + egui. v0.3.2. GPL-3.0-or-later.</p>
+        <p>A standalone SwanStation PS1 front-end in Rust + egui. v0.3.3. GPL-3.0-or-later.</p>
         <p class="disclaimer">TsundereStation is not affiliated with or endorsed by Sony Interactive Entertainment or any anime or game rights holders. PlayStation is a trademark of Sony Interactive Entertainment.</p>
       </div>
       <div class="footer-links">
         <a href="https://github.com/MARKMENTAL/TsundereStation" target="_blank" rel="noopener">GitHub</a>
-        <a href="https://github.com/MARKMENTAL/TsundereStation/releases/tag/v0.3.2" target="_blank" rel="noopener">Release v0.3.2</a>
+        <a href="https://github.com/MARKMENTAL/TsundereStation/releases/tag/v0.3.3" target="_blank" rel="noopener">Release v0.3.3</a>
         <a href="https://github.com/MARKMENTAL/TsundereStation/blob/main/frontend/README.md" target="_blank" rel="noopener">Documentation</a>
       </div>
     </div>

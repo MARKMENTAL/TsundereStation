@@ -128,17 +128,17 @@ is missing, it emits a placeholder. Do not hand-edit generated files in
 
 ## Version and artifact policy
 
-- Current version: **0.3.2**.
+- Current version: **0.3.3**.
 - Do not bump the version for ordinary fixes or documentation changes unless
   explicitly asked.
 - Do not rename the AppImage major/minor path casually. Rebuild the existing
   version in place for fixes.
 - After rebuilding, report the new SHA256 of both
-  `dist/TsundereStation-0.3.2-x86_64.AppImage` and
-  `dist/TsundereStation-0.3.2-aarch64.AppImage`.
+  `dist/TsundereStation-0.3.3-x86_64.AppImage` and
+  `dist/TsundereStation-0.3.3-aarch64.AppImage`.
 - Generated release files use tag `v<version>`, e.g.
-  `TsundereStation-v0.3.2-SHA256SUMS.txt` and
-  `TsundereStation-v0.3.2-release.md`. Upload both AppImages and the checksum
+  `TsundereStation-v0.3.3-SHA256SUMS.txt` and
+  `TsundereStation-v0.3.3-release.md`. Upload both AppImages and the checksum
   file manually; paste the release draft as GitHub release notes.
 - Documentation-only changes do not require rebuilding the AppImage.
 
@@ -147,7 +147,8 @@ is missing, it emits a placeholder. Do not hand-edit generated files in
 | Path | Responsibility |
 | --- | --- |
 | `src/main.rs` | CLI flags, config load, core discovery, eframe window setup, `--selftest` and `--selftest-hw`. |
-| `src/app.rs` | App state, splash, launcher, game view, pause overlay, full-screen Settings/Controller/Memory Card pages, file-browser dialog and toasts. |
+| `src/app.rs` | App state, splash, launcher, game view, pause overlay, full-screen Settings/Controller/Memory Card pages, file-browser dialog, fast-forward latch and toasts. |
+| `src/clipboard.rs` | Process-lifetime arboard clipboard worker for X11/Wayland image copies. |
 | `src/theme.rs` | Theme catalog parsing, `UiTheme` derivation, contrast engine, theme picker rows, custom window headers. |
 | `src/tv_ui.rs` | Large full-width TV rows and controller hints. |
 | `src/filebrowser.rs` | Built-in file browser for games and BIOS images. |
@@ -302,6 +303,15 @@ works with both the software and hardware renderers.
   assigned, and is set back to `RETRO_DEVICE_NONE` when cleared or disconnected.
 - The press that dismisses the splash is consumed until release, matching the
   in-game menu-resume behavior.
+- `config.r3_fast_forward` defaults to true and is toggled from the launcher.
+  When true, RightStick/R3 is reserved for the frontend fast-forward toggle and
+  is not mapped to an emulated joypad button. When false, R3 maps to
+  `RETRO_DEVICE_ID_JOYPAD_R3` again. Tab remains hold-to-fast-forward; the
+  latched state resets when leaving/unloading a game or when R3 fast-forward is
+  turned off.
+- Pause-menu **Copy screenshot to clipboard** copies the raw `Arc<Frame>` through
+  `src/clipboard.rs`. Keep the arboard `Clipboard` object alive on its worker
+  thread and never block the UI thread on clipboard access.
 - The Memory Card Manager opens from the launcher and uses the same custom
   accent header as Settings. Keep one outer scroll area for its details pane;
   nesting save-list and detail scroll areas makes lower controls unreliable.
@@ -609,6 +619,9 @@ Visual checklist for UI changes:
 - Burgundy on Black repaired text.
 - An external theme loaded from `~/.config/tsunderestation/themes.toml`.
 - Settings/Controller/Memory Card page headers and Back buttons; file-browser dialog header and close button.
+- Launcher R3 fast-forward On reserves R3 for fast-forward; Off restores R3 to
+  the emulated pad. Tab still holds fast-forward. Pause-menu Copy screenshot
+  places a raw image on the X11/Wayland clipboard.
 - Player 1 and Player 2 controller rows and their Controller-page assignments.
 - Two controllers in a two-player game, including Player 2 hotplug and clearing
   Player 2 back to **None**.
@@ -636,8 +649,8 @@ For AppImage changes, build both architectures and run their selftests:
 
 ```sh
 ./packaging/build-appimage.sh --arch all --skip-build
-sha256sum dist/TsundereStation-0.3.2-x86_64.AppImage
-sha256sum dist/TsundereStation-0.3.2-aarch64.AppImage
+sha256sum dist/TsundereStation-0.3.3-x86_64.AppImage
+sha256sum dist/TsundereStation-0.3.3-aarch64.AppImage
 ```
 
 ## Change checklist

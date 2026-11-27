@@ -46,6 +46,7 @@ pub struct Config {
     pub splash_seconds: f32,
     pub show_fps: bool,
     pub stretch_to_fill: bool,
+    pub r3_fast_forward: bool,
     pub theme: String,
     pub shader_preset: String,
     pub shader_bloom: f32,
@@ -77,6 +78,7 @@ impl Default for Config {
             splash_seconds: 4.0,
             show_fps: false,
             stretch_to_fill: false,
+            r3_fast_forward: true,
             theme: "JAPS1ME".to_string(),
             shader_preset: "off".to_string(),
             shader_bloom: 0.55,
@@ -321,6 +323,7 @@ mod tests {
         assert_eq!(config.shader_bloom, 0.55);
         assert_eq!(config.shader_scanlines, 0.35);
         assert!(!config.stretch_to_fill);
+        assert!(config.r3_fast_forward);
     }
 
     #[test]
@@ -371,5 +374,16 @@ mod tests {
         let text = toml::to_string(&config).expect("serialize config");
         let parsed: Config = toml::from_str(&text).expect("parse config");
         assert!(parsed.stretch_to_fill);
+    }
+
+    #[test]
+    fn r3_fast_forward_roundtrip() {
+        let config = Config {
+            r3_fast_forward: false,
+            ..Config::default()
+        };
+        let text = toml::to_string(&config).expect("serialize config");
+        let parsed: Config = toml::from_str(&text).expect("parse config");
+        assert!(!parsed.r3_fast_forward);
     }
 }

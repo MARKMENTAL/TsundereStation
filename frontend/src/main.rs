@@ -1,4 +1,5 @@
 mod app;
+mod clipboard;
 mod config;
 mod emu;
 mod filebrowser;

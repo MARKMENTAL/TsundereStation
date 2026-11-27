@@ -27,10 +27,10 @@ deploys as plain static files.
     screenshots from the same collection.
   - `demovid_480p.mp4` — the served 90-second demo video.
   - `demovid-poster.jpg` — poster frame for the demo player.
-- `downloads/TsundereStation-0.3.2-x86_64.AppImage` — current x86_64 AppImage,
+- `downloads/TsundereStation-0.3.3-x86_64.AppImage` — current x86_64 AppImage,
   copied from `../dist/`. Download artifacts are gitignored; copy them here
   before previewing/deploying the download links.
-- `downloads/TsundereStation-0.3.2-aarch64.AppImage` — current aarch64 AppImage,
+- `downloads/TsundereStation-0.3.3-aarch64.AppImage` — current aarch64 AppImage,
   copied from `../dist/`. Also gitignored and copied manually.
 - `downloads/README.md` — reminder for the download artifact workflow.
 

@@ -1,6 +1,6 @@
 [package]
 name = "tsunderestation"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 description = "A small egui/libretro frontend for the SwanStation core"
 license = "GPL-3.0-or-later"
@@ -11,6 +11,7 @@ bundled-sdl = ["sdl2/bundled"]
 
 [dependencies]
 anyhow = "1"
+arboard = { version = "3.7", features = ["wayland-data-control"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 eframe = { version = "0.35", default-features = false, features = [
     "default_fonts",

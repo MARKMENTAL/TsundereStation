@@ -78,6 +78,7 @@ pub struct SdlState {
     last_rumble_values: [(u16, u16); PORTS],
     last_button: [String; PORTS],
     activity: bool,
+    fast_forward_pressed: bool,
     suppress_input: bool,
     suppress_deadline: Option<Instant>,
     nav_prev: [bool; 8],
@@ -163,6 +164,7 @@ impl SdlState {
             last_rumble_values: [(0, 0); PORTS],
             last_button: std::array::from_fn(|_| String::new()),
             activity: false,
+            fast_forward_pressed: false,
             suppress_input: false,
             suppress_deadline: None,
             nav_prev: [false; 8],
@@ -206,6 +208,11 @@ impl SdlState {
     /// splash screen.
     pub fn take_activity(&mut self) -> bool {
         std::mem::take(&mut self.activity)
+    }
+
+    /// Edge-triggered frontend fast-forward toggle (RightStick / R3).
+    pub fn take_fast_forward_pressed(&mut self) -> bool {
+        std::mem::take(&mut self.fast_forward_pressed)
     }
 
     /// Discard gamepad input after resuming from the menu. Input stays zeroed
@@ -414,9 +421,13 @@ impl SdlState {
                     self.activity = true;
                     if let Some(player) = self.player_for_instance(which) {
                         self.last_button[player] = format!("{button:?}");
-                        if Some(player) == self.ui_player() && button == Button::Guide {
-                            log::info!("Player {} PS/Guide button pressed", player + 1);
-                            menu_pressed = true;
+                        if Some(player) == self.ui_player() {
+                            if button == Button::Guide {
+                                log::info!("Player {} PS/Guide button pressed", player + 1);
+                                menu_pressed = true;
+                            } else if button == Button::RightStick && config.r3_fast_forward {
+                                self.fast_forward_pressed = true;
+                            }
                         }
                     }
                 }
@@ -536,7 +547,9 @@ impl SdlState {
             self.players[player]
                 .controller
                 .as_ref()
-                .map(|controller| read_pad(controller, config.input.deadzone))
+                .map(|controller| {
+                    read_pad(controller, config.input.deadzone, config.r3_fast_forward)
+                })
                 .unwrap_or((0, [0; 4]))
         });
 
@@ -583,7 +596,7 @@ impl SdlState {
     }
 }
 
-fn read_pad(controller: &GameController, deadzone: f32) -> (u32, [i32; 4]) {
+fn read_pad(controller: &GameController, deadzone: f32, r3_fast_forward: bool) -> (u32, [i32; 4]) {
     let mut buttons = 0u32;
     let mut set = |button: Button, retro_id: u32| {
         if controller.button(button) {
@@ -603,7 +616,9 @@ fn read_pad(controller: &GameController, deadzone: f32) -> (u32, [i32; 4]) {
     set(Button::LeftShoulder, ffi::RETRO_DEVICE_ID_JOYPAD_L);
     set(Button::RightShoulder, ffi::RETRO_DEVICE_ID_JOYPAD_R);
     set(Button::LeftStick, ffi::RETRO_DEVICE_ID_JOYPAD_L3);
-    set(Button::RightStick, ffi::RETRO_DEVICE_ID_JOYPAD_R3);
+    if !r3_fast_forward {
+        set(Button::RightStick, ffi::RETRO_DEVICE_ID_JOYPAD_R3);
+    }
 
     if controller.axis(Axis::TriggerLeft) > 16384 {
         buttons |= 1u32 << ffi::RETRO_DEVICE_ID_JOYPAD_L2;

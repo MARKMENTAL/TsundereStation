@@ -1,3 +1,4 @@
+use crate::clipboard::ClipboardClient;
 use crate::config::Config;
 use crate::emu::{Command, WorkerEvent, WorkerHandle};
 use crate::filebrowser::{BrowseKind, BrowseResult, FileBrowser};
@@ -73,6 +74,7 @@ enum OverlayAction {
     SaveState,
     LoadState,
     TakeScreenshot,
+    CopyScreenshot,
     SwapDisc,
     Settings,
     Controller,
@@ -97,6 +99,7 @@ enum LauncherItem {
     MemoryCardManager,
     ToggleSplash,
     ToggleFps,
+    ToggleR3FastForward,
     ToggleFullscreen,
     Settings,
     Quit,
@@ -189,6 +192,7 @@ pub struct App {
     paused: bool,
     paused_by_overlay: bool,
     overlay_open: bool,
+    fast_forward_latched: bool,
     menu_selection: usize,
     disc_labels: Vec<String>,
     disc_index: usize,
@@ -203,6 +207,7 @@ pub struct App {
     quick_slot: u32,
     fps: FpsMeter,
     shader: Arc<Mutex<ShaderState>>,
+    clipboard: ClipboardClient,
 
     texture: Option<egui::TextureHandle>,
     texture_seq: u64,
@@ -318,6 +323,7 @@ impl App {
             paused: false,
             paused_by_overlay: false,
             overlay_open: false,
+            fast_forward_latched: false,
             menu_selection: 0,
             disc_labels: Vec::new(),
             disc_index: 0,
@@ -332,6 +338,7 @@ impl App {
             quick_slot: 0,
             fps: FpsMeter::default(),
             shader: Arc::new(Mutex::new(ShaderState::default())),
+            clipboard: ClipboardClient::default(),
             texture: None,
             texture_seq: 0,
             texture_size: [0, 0],
@@ -386,6 +393,7 @@ impl App {
                     self.last_error = None;
                     self.screen = Screen::Game;
                     self.screen_stack.clear();
+                    self.fast_forward_latched = false;
                     self.fps.reset();
                     self.apply_player2_port();
                     self.overlay_open = false;
@@ -406,6 +414,7 @@ impl App {
                 }
                 WorkerEvent::Unloaded => {
                     self.screen = Screen::Launcher;
+                    self.fast_forward_latched = false;
                     self.launcher_focus = 0;
                     self.fps.reset();
                     self.game_path = None;
@@ -735,6 +744,7 @@ impl App {
 
     fn poll_sdl(&mut self, ctx: &egui::Context) {
         let menu = self.sdl.poll(&self.host, &self.config);
+        let fast_forward_pressed = self.sdl.take_fast_forward_pressed();
         let p1_guid = self.sdl.player_guid(0).to_string();
         let p2_guid = self.sdl.player_guid(1).to_string();
         let mut dirty = false;
@@ -757,6 +767,19 @@ impl App {
                 Screen::Game => self.toggle_overlay(),
                 _ => {}
             }
+        }
+        if fast_forward_pressed && self.screen == Screen::Game {
+            self.fast_forward_latched = !self.fast_forward_latched;
+            self.push_toast(
+                if self.fast_forward_latched {
+                    "Fast-forward on"
+                } else {
+                    "Fast-forward off"
+                }
+                .into(),
+                MessageKind::Info,
+                2.0,
+            );
         }
 
         if self.overlay_open && !self.paused && self.screen == Screen::Game {
@@ -868,6 +891,10 @@ impl App {
                 OverlayAction::TakeScreenshot,
                 "Take screenshot (F12)".to_string(),
             ),
+            (
+                OverlayAction::CopyScreenshot,
+                "Copy screenshot to clipboard".to_string(),
+            ),
         ];
         if self.disc_labels.len() > 1 {
             let current = self
@@ -963,6 +990,7 @@ impl App {
             OverlayAction::SaveState => self.worker.send(Command::SaveState(self.quick_slot)),
             OverlayAction::LoadState => self.worker.send(Command::LoadState(self.quick_slot)),
             OverlayAction::TakeScreenshot => self.take_screenshot(),
+            OverlayAction::CopyScreenshot => self.copy_screenshot(),
             OverlayAction::SwapDisc => self.open_swap_disc_picker(),
             OverlayAction::Settings => self.open_settings(),
             OverlayAction::Controller => self.open_controller(),
@@ -1104,6 +1132,46 @@ impl App {
         }
     }
 
+    fn copy_screenshot(&mut self) {
+        let Some((frame, _)) = self.host.video.latest() else {
+            self.push_toast(
+                "No video frame is available yet".into(),
+                MessageKind::Warning,
+                3.0,
+            );
+            return;
+        };
+        match self.clipboard.copy_frame(frame) {
+            Ok(()) => self.push_toast(
+                "Copying screenshot to clipboard…".into(),
+                MessageKind::Info,
+                2.0,
+            ),
+            Err(error) => self.push_toast(
+                format!("Could not copy screenshot: {error:#}"),
+                MessageKind::Error,
+                6.0,
+            ),
+        }
+    }
+
+    fn poll_clipboard(&mut self) {
+        while let Some(result) = self.clipboard.poll() {
+            match result {
+                Ok(()) => self.push_toast(
+                    "Screenshot copied to clipboard".into(),
+                    MessageKind::Info,
+                    3.0,
+                ),
+                Err(error) => self.push_toast(
+                    format!("Could not copy screenshot: {error:#}"),
+                    MessageKind::Error,
+                    6.0,
+                ),
+            }
+        }
+    }
+
     fn toggle_fps_display(&mut self, notify: bool) {
         self.config.show_fps = !self.config.show_fps;
         let _ = self.config.save();
@@ -1170,7 +1238,12 @@ impl App {
                 }
             }
         }
-        let fast = !self.overlay_open && !typing && ctx.input(|i| i.key_down(egui::Key::Tab));
+        let fast = fast_forward_enabled(
+            self.fast_forward_latched,
+            ctx.input(|i| i.key_down(egui::Key::Tab)),
+            self.overlay_open,
+            typing,
+        );
         self.host
             .fast_forward
             .store(fast, std::sync::atomic::Ordering::Relaxed);
@@ -1286,6 +1359,7 @@ impl App {
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.screen = Screen::Launcher;
         self.screen_stack.clear();
+        self.fast_forward_latched = false;
         self.launcher_focus = 0;
         self.overlay_open = false;
         self.paused = false;
@@ -1344,6 +1418,7 @@ impl App {
             LauncherItem::MemoryCardManager,
             LauncherItem::ToggleSplash,
             LauncherItem::ToggleFps,
+            LauncherItem::ToggleR3FastForward,
             LauncherItem::ToggleFullscreen,
             LauncherItem::Settings,
             LauncherItem::Quit,
@@ -1391,6 +1466,14 @@ impl App {
             LauncherItem::ToggleFps => format!(
                 "FPS/status overlay: {}",
                 if self.config.show_fps { "On" } else { "Off" }
+            ),
+            LauncherItem::ToggleR3FastForward => format!(
+                "R3 fast-forward: {}",
+                if self.config.r3_fast_forward {
+                    "On"
+                } else {
+                    "Off"
+                }
             ),
             LauncherItem::ToggleFullscreen => "Toggle fullscreen".to_string(),
             LauncherItem::Settings => "Settings…".to_string(),
@@ -1567,6 +1650,16 @@ impl App {
                 let _ = self.config.save();
             }
             LauncherItem::ToggleFps => self.toggle_fps_display(false),
+            LauncherItem::ToggleR3FastForward => {
+                self.config.r3_fast_forward = !self.config.r3_fast_forward;
+                if !self.config.r3_fast_forward {
+                    self.fast_forward_latched = false;
+                    self.host
+                        .fast_forward
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                }
+                let _ = self.config.save();
+            }
             LauncherItem::ToggleFullscreen => self.toggle_fullscreen(ctx),
             LauncherItem::Settings => self.open_settings(),
             LauncherItem::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
@@ -1900,7 +1993,7 @@ impl App {
                 ui.separator();
                 controller_hint(
                     ui,
-                    "D-pad/stick: move  ·  Cross: select  ·  Circle/PS: close  ·  Left/Right: slot",
+                    "D-pad/stick: move  ·  Cross: select  ·  Circle/PS: close  ·  Left/Right: slot  ·  R3: fast-forward",
                     &self.ui_theme,
                 );
             });
@@ -3152,6 +3245,7 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.process_worker_events();
         self.process_host_messages();
+        self.poll_clipboard();
         self.poll_sdl(&ctx);
         self.update_measured_fps();
         let splash_finished = self.handle_splash(&ctx);
@@ -3187,6 +3281,10 @@ impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         self.ui_theme.background.to_normalized_gamma_f32()
     }
+}
+
+fn fast_forward_enabled(latched: bool, tab_held: bool, overlay_open: bool, typing: bool) -> bool {
+    !overlay_open && !typing && (latched || tab_held)
 }
 
 fn game_image_rect(view: egui::Rect, frame: [usize; 2], stretch: bool) -> egui::Rect {
@@ -3452,5 +3550,14 @@ mod tests {
 
         let stretch = game_image_rect(view, [320, 240], true);
         assert_eq!(stretch, view);
+    }
+
+    #[test]
+    fn fast_forward_combines_latch_tab_and_menu_state() {
+        assert!(!fast_forward_enabled(false, false, false, false));
+        assert!(fast_forward_enabled(true, false, false, false));
+        assert!(fast_forward_enabled(false, true, false, false));
+        assert!(!fast_forward_enabled(true, true, true, false));
+        assert!(!fast_forward_enabled(true, true, false, true));
     }
 }
